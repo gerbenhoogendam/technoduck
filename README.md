@@ -15,6 +15,7 @@ A native macOS file-transfer client written in Swift and SwiftUI, with a local f
 - **Folder sizes:** every folder's total size is worked out in the background.
 - **Hidden files:** View › Show Hidden Files (⇧⌘.).
 - **Themes:** View › Theme › Nova Midnight, Nova Daylight or Neon Pond, after Panic's Nova editor, or Macintosh 512K in greyscale and Chicago.
+- **Settings (⌘,):** theme, hidden files, folder sizes on or off, whether Activity opens when a transfer starts, a sound when a sync finishes, how many syncs can be undone (and clearing those backups), and iCloud bookmarks.
 - **Excludes:** per bookmark, e.g. `node_modules, .git, *.log`.
 - **Folder pairs and auto-upload:** each bookmark remembers its local and server folders, and can upload changes as soon as you save.
 - **Favorites:** any folder, on your Mac or a server, can be pinned in the sidebar.

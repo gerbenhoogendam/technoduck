@@ -9,6 +9,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
 @MainActor final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     let store = Store()
     var window: NSWindow!
+    var settings: NSWindow?
 
     func applicationDidFinishLaunching(_ note: Notification) {
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 820),
@@ -30,10 +31,11 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
         if scene == "four" || scene == "timeline" { window.setContentSize(NSSize(width: 1900, height: 900)) }
         Task { @MainActor [self] in
             if let scene { await store.stage(scene) }
+            if scene == "settings" { showSettings(nil) }
             try? await Task.sleep(for: .seconds(scene == nil ? 2 : 3))
             let shot = URL(fileURLWithPath: shotPath)
             try? FileManager.default.createDirectory(at: shot.deletingLastPathComponent(), withIntermediateDirectories: true)
-            let windows = [window!] + NSApp.windows.filter { $0 !== window && $0.isVisible && $0.sheetParent != nil }
+            let windows = [window!] + NSApp.windows.filter { $0 !== window && $0.isVisible && ($0.sheetParent != nil || $0 === settings) }
             for (i, w) in windows.enumerated() {
                 let view = w.contentView!.superview ?? w.contentView!
                 guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
@@ -48,6 +50,16 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
 
     @objc func toggleHidden(_ sender: Any?) { store.showHidden.toggle() }
+    @objc func showSettings(_ sender: Any?) {
+        if settings == nil {
+            let w = NSWindow(contentViewController: NSHostingController(rootView: SettingsView().environment(store)))
+            w.title = "Settings"; w.styleMask = [.titled, .closable]; w.isReleasedWhenClosed = false
+            w.center()
+            settings = w
+        }
+        settings!.contentView?.superview?.setGreyscale(store.theme.grayscale > 0)  // RootView greys it on later theme changes
+        settings!.makeKeyAndOrderFront(nil)
+    }
     @objc func refreshAll(_ sender: Any?) { Task { await store.refreshAll() } }
     @objc func showActivity(_ sender: Any?) { store.showInspector.toggle() }
     @objc func addPane(_ sender: Any?) { store.addPane() }
@@ -71,6 +83,8 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     let menu = NSMenu()
     let app = NSMenu()
     app.addItem(withTitle: "About Technoduck", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+    app.addItem(.separator())
+    app.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
     app.addItem(.separator())
     app.addItem(withTitle: "Hide Technoduck", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
     app.addItem(withTitle: "Quit Technoduck", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")

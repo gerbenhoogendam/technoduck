@@ -53,6 +53,7 @@ import AppKit
         sizeTask?.cancel()
         sized = [:]
         guard let service else { return }
+        guard UserDefaults.standard.object(forKey: "folderSizes") as? Bool ?? true else { sizing = false; return }  // Settings › Calculate folder sizes
         let dirs = files.filter { $0.isDir && !$0.isLink }.map(\.path)
         sizing = !dirs.isEmpty
         sizeTask = Task {
@@ -86,6 +87,14 @@ import AppKit
     var theme = Theme(rawValue: ProcessInfo.processInfo.environment["TECHNODUCK_THEME"] ?? UserDefaults.standard.string(forKey: "theme") ?? "") ?? .system {
         didSet { if !isDemo { UserDefaults.standard.set(theme.rawValue, forKey: "theme") } }
     }
+    // Settings (Technoduck › Settings…).
+    var folderSizes = UserDefaults.standard.object(forKey: "folderSizes") as? Bool ?? true {
+        didSet { UserDefaults.standard.set(folderSizes, forKey: "folderSizes"); Task { await refreshAll() } }  // Pane.measure reads the key
+    }
+    var autoShowActivity = UserDefaults.standard.object(forKey: "autoShowActivity") as? Bool ?? true { didSet { UserDefaults.standard.set(autoShowActivity, forKey: "autoShowActivity") } }
+    var doneSound = UserDefaults.standard.bool(forKey: "doneSound") { didSet { UserDefaults.standard.set(doneSound, forKey: "doneSound") } }
+    /// How many syncs and copies can be undone; older backups are deleted.
+    var undoLimit = UserDefaults.standard.object(forKey: "undoLimit") as? Int ?? 30 { didSet { UserDefaults.standard.set(undoLimit, forKey: "undoLimit") } }
 
     private static let support = URL(fileURLWithPath: homeDir).appendingPathComponent("Library/Application Support")
     private let dir = support.appendingPathComponent("Technoduck")
@@ -309,7 +318,7 @@ import AppKit
                                 backups: undoable ? backups.appendingPathComponent(rec.id.uuidString) : nil)
         let t = Transfer(kind: kind, name: title, detail: p.summary)
         transfers.insert(t, at: 0)
-        if !quiet { showInspector = true; inspectorTab = .transfers }
+        if !quiet && autoShowActivity { showInspector = true; inspectorTab = .transfers }
         var errors: [String] = [], bytes: Int64 = 0
         for (n, op) in p.ops.enumerated() {
             do { rec.applied.append(try await engine.apply(op)); bytes += op.size } catch { errors.append("\(op.rel): \(error.localizedDescription)") }
@@ -318,11 +327,12 @@ import AppKit
         let canUndo = undoable && !rec.applied.isEmpty
         if canUndo {
             records.append(rec)
-            while records.count > 30 { try? FileManager.default.removeItem(at: backups.appendingPathComponent(records.removeFirst().id.uuidString)) }
+            while records.count > undoLimit { try? FileManager.default.removeItem(at: backups.appendingPathComponent(records.removeFirst().id.uuidString)) }
             save(records, "syncs.json")
             t.recordID = rec.id
         }
         t.state = errors.isEmpty ? .done : .failed("\(errors.count) of \(p.ops.count) failed — \(errors[0])")
+        if doneSound && !quiet { NSSound(named: errors.isEmpty ? "Glass" : "Basso")?.play() }
         for id in Set([p.a.bookmark?.id, p.b.bookmark?.id].compactMap { $0 }) {
             addLog(LogEvent(bookmarkID: id, kind: kind, title: errors.isEmpty ? title : "\(title) (\(errors.count) failed)",
                             detail: "\(p.a.root)  ⇄  \(p.b.root)\n\(p.summary)", bytes: bytes, recordID: canUndo ? rec.id : nil,
@@ -341,7 +351,7 @@ import AppKit
         let dir = backups.appendingPathComponent(rec.id.uuidString)
         let engine = SyncEngine(a: a, b: b, aRoot: rec.localRoot, bRoot: rec.remoteRoot, backups: dir)
         let t = Transfer(kind: .rollback, name: "Undo: \(rec.title)", detail: "\(rec.applied.count) changes")
-        transfers.insert(t, at: 0); showInspector = true
+        transfers.insert(t, at: 0); if autoShowActivity { showInspector = true }
         var errors: [String] = []
         for (n, step) in rec.applied.reversed().enumerated() {
             do { try await engine.undo(step) } catch { errors.append("\(step.op.rel): \(error.localizedDescription)") }
@@ -355,6 +365,17 @@ import AppKit
                             items: errors))
         }
         await refreshAll()
+    }
+
+    /// Disk space taken by the backups that make undo possible.
+    func undoBackupSize() -> Int64 {
+        let files = FileManager.default.enumerator(at: backups, includingPropertiesForKeys: [.totalFileAllocatedSizeKey])
+        return (files?.allObjects as? [URL] ?? []).reduce(0) { $0 + Int64((try? $1.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0) }
+    }
+    /// Forgets every undo step and deletes its backups. Files on disk and servers are left as they are.
+    func clearUndoHistory() {
+        try? FileManager.default.removeItem(at: backups)
+        records = []; save(records, "syncs.json")
     }
 
     // MARK: One-click backup
