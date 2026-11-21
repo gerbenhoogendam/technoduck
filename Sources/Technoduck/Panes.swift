@@ -9,7 +9,7 @@ struct RootView: View {
     var body: some View {
         @Bindable var store = store
         NavigationSplitView {
-            Sidebar(editing: $editing)
+            Sidebar(editing: $editing).font(store.theme.font)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 230)
         } detail: {
             // Dividers between panes can be dragged; a pane's grip (≡) drags the pane itself to another spot.
@@ -26,9 +26,10 @@ struct RootView: View {
             }
             .id(store.panes.map(\.id))
             .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar() }
+            .font(store.theme.font)
         }
         .inspector(isPresented: $store.showInspector) {
-            InspectorView().inspectorColumnWidth(min: 280, ideal: 330)
+            InspectorView().font(store.theme.font).inspectorColumnWidth(min: 280, ideal: 330)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -48,9 +49,13 @@ struct RootView: View {
             }
         }
         .tint(store.theme.accent)
-        .onChange(of: store.theme, initial: true) { NSApp.appearance = store.theme.appearance }
-        .sheet(item: $editing) { b in ConnectionSheet(bookmark: b) }
-        .sheet(item: $store.plan) { p in SyncPlanSheet(plan: p) }
+        .onChange(of: store.theme, initial: true) {
+            NSApp.appearance = store.theme.appearance
+            // SwiftUI's .grayscale on the split view breaks the toolbar's safe area, so the window frame gets a Core Image filter.
+            for w in NSApp.windows where w.sheetParent == nil { w.contentView?.superview?.setGreyscale(store.theme.grayscale > 0) }
+        }
+        .sheet(item: $editing) { b in ConnectionSheet(bookmark: b).themed(store.theme) }
+        .sheet(item: $store.plan) { p in SyncPlanSheet(plan: p).themed(store.theme) }
         .navigationTitle("Technoduck")
         .navigationSubtitle(store.active?.title ?? "")
     }
@@ -212,10 +217,16 @@ struct PaneView: View {
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         }
         .buttonStyle(.borderless)
-        .font(.callout)
+        .font(store.theme.font ?? .callout)
         .padding(.horizontal, 10).frame(height: 34)
         .themeBackground(store.theme.bar, .bar)
-        .overlay(alignment: .top) { if isActive { Rectangle().fill(store.theme.gradient).frame(height: 2) } }
+        .overlay(alignment: .top) {
+            if isActive {
+                if store.theme == .mac512 { // the pinstripes of an active 1984 title bar
+                    VStack(spacing: 1) { ForEach(0..<3, id: \.self) { _ in Rectangle().frame(height: 1) } }
+                } else { Rectangle().fill(store.theme.gradient).frame(height: 2) }
+            }
+        }
     }
 
     private var saved: Bookmark? { store.bookmarks.first { $0.id == pane.bookmark?.id } }
