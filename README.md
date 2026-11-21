@@ -30,3 +30,7 @@ Requires macOS 14 or later and Swift 5.9 or later.
 ```
 
 `Cargo.toml` and `launcher/` only exist so a Cargo-based checker can build and start the Swift app. You don't need them.
+
+## License
+
+MIT — see [LICENSE](LICENSE).

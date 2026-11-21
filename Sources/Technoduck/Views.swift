@@ -559,6 +559,7 @@ struct BookmarksView: View {
                         .frame(maxWidth: .infinity, minHeight: 96)
                         .foregroundStyle(.secondary)
                         .background(RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6])).foregroundStyle(.quaternary))
+                        .contentShape(RoundedRectangle(cornerRadius: 12))  // the whole tile is the button, not just the + and label
                 }
                 .buttonStyle(.plain)
             }
