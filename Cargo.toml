@@ -1,0 +1,11 @@
+# Launcher so Craft Anything's checker (which expects Cargo) can build and run the Swift app.
+# The app itself is the Swift package in Package.swift / Sources/Technoduck.
+[package]
+name = "technoduck-launcher"
+version = "1.0.0"
+edition = "2021"
+build = "launcher/build.rs"
+
+[[bin]]
+name = "technoduck"
+path = "launcher/main.rs"

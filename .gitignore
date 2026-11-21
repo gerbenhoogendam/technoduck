@@ -1,0 +1,5 @@
+.build/
+shots/
+target/
+Technoduck.app/
+.DS_Store
