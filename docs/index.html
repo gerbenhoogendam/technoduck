@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Technoduck — dual-pane file transfer for Mac</title>
+<meta name="description" content="Technoduck is a free, open-source SFTP, FTP, FTPS and WebDAV client for macOS with dual panes, one-click sync, dry runs and undo.">
+<meta property="og:title" content="Technoduck — sync without fear">
+<meta property="og:description" content="A free dual-pane SFTP, FTP, FTPS and WebDAV client for Mac, with dry runs and undo.">
+<meta property="og:image" content="img/poster.jpg">
+<meta name="theme-color" content="#07080f">
+<link rel="icon" href="favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@600;800;900&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <a class="brand" href="#top"><img src="img/icon.png" alt="" width="34" height="34"><span>Technoduck</span></a>
+  <nav aria-label="Sections">
+    <a href="#sync">Sync</a><a href="#themes">Themes</a><a href="#features">Features</a>
+    <a href="https://github.com/gerbenhoogendam/technoduck">GitHub</a>
+  </nav>
+  <a class="btn small" href="https://github.com/gerbenhoogendam/technoduck/releases/latest">Download</a>
+</header>
+
+<main id="main">
+  <!-- Hero: the title lifts away while the app tilts up out of the floor -->
+  <section class="scene hero" data-scene="hero" id="top">
+    <div class="sticky">
+      <div class="orb o1" data-depth="-.25"></div><div class="orb o2" data-depth="-.45"></div><div class="orb o3" data-depth="-.15"></div>
+      <div class="floor"><div class="grid"></div></div>
+      <div class="hero-copy">
+        <img class="logo" src="img/icon.png" alt="" width="132" height="132">
+        <h1 class="word">TECHNODUCK</h1>
+        <p class="tagline">The dual-pane file transfer client for Mac.<br><strong>Sync without fear.</strong></p>
+        <div class="ctas">
+          <a class="btn" href="https://github.com/gerbenhoogendam/technoduck/releases/latest">Download for Mac</a>
+          <a class="btn ghost" href="#film">Watch the film</a>
+        </div>
+        <p class="meta">Free · Open source · macOS 14+ · Apple silicon & Intel</p>
+      </div>
+      <div class="hero-shot"><img src="img/hero-midnight.jpg" alt="Technoduck with a local folder on the left and a WebDAV server on the right" width="2000" height="1171"></div>
+    </div>
+  </section>
+
+  <div class="marquee" aria-hidden="true"><div class="track" data-drift="-.35">SFTP ✦ FTP ✦ FTPS ✦ WEBDAV ✦ LOCAL DISK ✦ SFTP ✦ FTP ✦ FTPS ✦ WEBDAV ✦ LOCAL DISK ✦ SFTP ✦ FTP ✦ FTPS ✦ WEBDAV ✦ LOCAL DISK ✦</div></div>
+
+  <!-- Side by side -->
+  <section class="split">
+    <div class="copy">
+      <p class="kicker">01 / Dual pane</p>
+      <h2>Your Mac and your server, side by side.</h2>
+      <p>Drag files between them, or in from Finder. Every folder's real size is worked out in the background, so you always know what you're about to move.</p>
+    </div>
+    <div class="media">
+      <img class="framed" src="img/hero-pond.jpg" alt="Neon Pond theme: local site folder next to the live server" width="2000" height="1171" data-depth=".08" loading="lazy">
+      <span class="float f1" data-depth=".18">assets · 19,4 MB</span>
+      <span class="float f2" data-depth=".26">duckpond.local</span>
+      <span class="float f3" data-depth=".2">13 items</span>
+    </div>
+  </section>
+
+  <!-- Sync story: zoom to the button, three directions, then the dry run sheet -->
+  <section class="scene sync" data-scene="sync" id="sync">
+    <div class="sticky">
+      <div class="stage">
+        <div class="zoom">
+          <img src="img/hero-pond.jpg" alt="The sync button between two panes" width="2000" height="1171" loading="lazy">
+          <span class="ring" aria-hidden="true"></span>
+        </div>
+        <div class="dim"></div>
+        <img class="sheet" src="img/dryrun-sheet.png" alt="Dry run: 19 files, 19,7 MB would go from A to B" width="900" height="635" loading="lazy">
+      </div>
+      <div class="steps">
+        <p class="kicker">02 / One-click sync</p>
+        <div class="step"><b>A → B</b><span>Upload what changed.</span></div>
+        <div class="step"><b>B → A</b><span>Pull the server back home.</span></div>
+        <div class="step"><b>A ⇄ B</b><span>Both ways. Newest wins.</span></div>
+        <div class="step"><b>Dry run</b><span>See every file and every megabyte before anything moves.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Undo + timeline -->
+  <section class="scene undo" data-scene="undo">
+    <div class="sticky">
+      <div class="copy center">
+        <p class="kicker">03 / Undo + timeline</p>
+        <h2>Every sync can be rolled back.</h2>
+        <p>Replaced files are kept first, and a sync never deletes anything. Each connection gets a timeline of what changed, grouped by day.</p>
+      </div>
+      <div class="pan"><img src="img/timeline-daylight.jpg" alt="Nova Daylight with the timeline of a sync" width="2000" height="947" loading="lazy"></div>
+    </div>
+  </section>
+
+  <!-- Four browsers: a horizontal pan -->
+  <section class="scene four" data-scene="four">
+    <div class="sticky">
+      <div class="copy center">
+        <p class="kicker">04 / Four browsers</p>
+        <h2>Up to four locations at once.</h2>
+        <p>Drag panes by their grip, resize them, and sync any two neighbours.</p>
+      </div>
+      <div class="wide"><img src="img/four-pond.jpg" alt="Four panes: local site, live server, staging server and backups" width="2000" height="947" loading="lazy"></div>
+    </div>
+  </section>
+
+  <!-- Favorites -->
+  <section class="split reverse">
+    <div class="copy">
+      <p class="kicker">05 / Favorites</p>
+      <h2>Pin any folder. Local or server.</h2>
+      <p>The sidebar shows where it lives in bold and the end of its path below. Right-click a server folder to make it the start folder for that bookmark.</p>
+    </div>
+    <div class="media">
+      <img class="framed" src="img/empty-midnight.jpg" alt="Favorites and bookmarks in the sidebar" width="2000" height="1171" data-depth=".1" loading="lazy">
+      <span class="float f4" data-depth=".22">★ /public_html/assets/img</span>
+    </div>
+  </section>
+
+  <!-- Themes: the cards fan out, then each one takes the stage -->
+  <section class="scene themes" data-scene="themes" id="themes">
+    <div class="sticky">
+      <div class="tint"></div>
+      <div class="copy center">
+        <p class="kicker">06 / Themes</p>
+        <h2>Four looks. One duck.</h2>
+        <p class="theme-name" aria-live="polite">Nova Midnight</p>
+      </div>
+      <div class="deck">
+        <figure class="card"><img src="img/hero-midnight.jpg" alt="Nova Midnight theme" width="2000" height="1171" loading="lazy"><figcaption>Nova Midnight</figcaption></figure>
+        <figure class="card"><img src="img/hero-daylight.jpg" alt="Nova Daylight theme" width="2000" height="1171" loading="lazy"><figcaption>Nova Daylight</figcaption></figure>
+        <figure class="card"><img src="img/hero-pond.jpg" alt="Neon Pond theme" width="2000" height="1171" loading="lazy"><figcaption>Neon Pond</figcaption></figure>
+        <figure class="card"><img src="img/mac512.png" alt="Macintosh 512K theme" width="2000" height="1171" loading="lazy"><figcaption>Macintosh 512K</figcaption></figure>
+      </div>
+    </div>
+  </section>
+
+  <!-- 1984 -->
+  <section class="mac" aria-labelledby="mac-h">
+    <div class="mac-copy" data-depth="-.06">
+      <p class="kicker">07 / 1984 mode</p>
+      <h2 id="mac-h">Hello, Macintosh.</h2>
+      <p>Pick Macintosh 512K and the whole app goes greyscale, in Chicago, with pinstripes on the active pane. No colour was harmed.</p>
+    </div>
+    <div class="mac-window" data-depth=".12">
+      <div class="titlebar"><span class="close"></span><span class="title">Technoduck</span></div>
+      <img src="img/mac512.png" alt="Technoduck in the Macintosh 512K theme" width="2000" height="1171" loading="lazy">
+    </div>
+  </section>
+
+  <!-- Settings -->
+  <section class="split settings">
+    <div class="copy">
+      <p class="kicker">08 / Settings</p>
+      <h2>Make it yours.</h2>
+      <p>Press ⌘, for the theme, hidden files, folder sizes, a sound when a sync is done, and how many syncs you can undo.</p>
+    </div>
+    <div class="media pair">
+      <img class="s1" src="img/settings-midnight.png" alt="Settings in Nova Midnight" width="900" height="802" data-depth=".1" loading="lazy">
+      <img class="s2" src="img/settings-512.png" alt="Settings in Macintosh 512K" width="900" height="802" data-depth="-.06" loading="lazy">
+    </div>
+  </section>
+
+  <!-- Everything else -->
+  <section class="features" id="features">
+    <div class="copy center">
+      <p class="kicker">09 / And more</p>
+      <h2>Built for people who ship websites.</h2>
+    </div>
+    <div class="cols">
+      <div class="col" data-depth=".06">
+        <article><h3>Excludes</h3><p><code>node_modules, .git, *.log</code> stay home, per bookmark.</p></article>
+        <article><h3>Auto-upload</h3><p>Folder pairs upload changes as soon as you save.</p></article>
+        <article><h3>Edit in your own app</h3><p>Open a server file in its default app; every save goes back up.</p></article>
+      </div>
+      <div class="col" data-depth="-.08">
+        <article><h3>One-click backups</h3><p>Dated snapshots of a server. Unchanged files are APFS clones, so only changes download.</p></article>
+        <article><h3>iCloud bookmarks</h3><p>Bookmarks sync between your Macs with a daily backup. Passwords stay in the Keychain.</p></article>
+      </div>
+      <div class="col" data-depth=".14">
+        <article><h3>Your SSH keys</h3><p>SFTP uses the system <code>sftp</code>, so your keys and config just work.</p></article>
+        <article><h3>Hidden files</h3><p>Show or hide them with ⇧⌘. like in Finder.</p></article>
+        <article><h3>Start folders</h3><p>Right-click › Set as Start Folder.</p></article>
+      </div>
+    </div>
+  </section>
+
+  <!-- Film -->
+  <section class="film" id="film">
+    <div class="copy center"><p class="kicker">10 / The film</p><h2>57 seconds of Technoduck.</h2></div>
+    <video controls preload="none" poster="img/poster.jpg" width="1280" height="720" data-depth=".04">
+      <source src="promo.mp4" type="video/mp4">
+    </video>
+  </section>
+
+  <!-- Download -->
+  <section class="download" id="download">
+    <img class="logo big" src="img/icon.png" alt="" width="180" height="180" data-depth="-.2">
+    <h2>Get Technoduck.</h2>
+    <a class="btn huge" href="https://github.com/gerbenhoogendam/technoduck/releases/latest">Download for Mac</a>
+    <p class="meta">Version 1.0 · Universal · macOS 14 or later · Notarised by Apple · MIT licence</p>
+  </section>
+</main>
+
+<footer>
+  <span>Technoduck is free and open source under the MIT licence.</span>
+  <a href="https://github.com/gerbenhoogendam/technoduck">Source on GitHub</a>
+</footer>
+<script src="main.js"></script>
+</body>
+</html>
