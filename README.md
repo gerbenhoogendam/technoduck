@@ -6,6 +6,10 @@ A native macOS file-transfer client written in Swift and SwiftUI, with a local f
 
 **Protocols:** SFTP, FTP, FTPS, WebDAV (HTTP/HTTPS) and local disk.
 
+## Download
+
+**[Download Technoduck for Mac](https://github.com/gerbenhoogendam/technoduck/releases/latest)**: a universal app for Apple silicon and Intel Macs with macOS 14 or later, signed and notarised by Apple. Unzip it and move Technoduck to your Applications folder.
+
 ## Features
 
 - **Up to four browsers:** each pane shows your Mac or any server. Drag the dividers to resize, drag a pane's ≡ grip to move it, and drag files between panes or in from Finder.
@@ -32,6 +36,7 @@ Requires macOS 14 or later and Swift 5.9 or later.
 
 ```sh
 ./build-app.sh                       # builds Technoduck.app
+NOTARY_PROFILE=<profile> ./release.sh  # universal, signed and notarised: Technoduck-<version>.zip
 .build/release/Technoduck --self-test
 ```
 
