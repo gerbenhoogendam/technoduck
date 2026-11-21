@@ -79,16 +79,19 @@ import AppKit
     var showInspector = false
     var inspectorTab = Tab.transfers
     var showHidden = UserDefaults.standard.bool(forKey: "showHidden") { didSet { UserDefaults.standard.set(showHidden, forKey: "showHidden") } }
-    var iCloud = UserDefaults.standard.bool(forKey: "iCloudSync")
+    var iCloud = !isDemo && UserDefaults.standard.bool(forKey: "iCloudSync")
     var message = ""
     var planning = false
     var plan: SyncPlan?
+    var theme = Theme(rawValue: ProcessInfo.processInfo.environment["TECHNODUCK_THEME"] ?? UserDefaults.standard.string(forKey: "theme") ?? "") ?? .system {
+        didSet { if !isDemo { UserDefaults.standard.set(theme.rawValue, forKey: "theme") } }
+    }
 
-    private static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    private static let support = URL(fileURLWithPath: homeDir).appendingPathComponent("Library/Application Support")
     private let dir = support.appendingPathComponent("Technoduck")
     private var backups: URL { dir.appendingPathComponent("Backups") }
-    private let editDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Technoduck/Edit")
-    private let cloudDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/Technoduck")
+    private let editDir = URL(fileURLWithPath: homeDir).appendingPathComponent("Library/Caches/Technoduck/Edit")
+    private let cloudDir = URL(fileURLWithPath: homeDir).appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/Technoduck")
     private var cloudFile: URL { cloudDir.appendingPathComponent("library.json") }
     var libraryBackups: URL { (iCloud ? cloudDir : dir).appendingPathComponent("Bookmark Backups") }
 
@@ -106,7 +109,7 @@ import AppKit
     init() {
         let old = Self.support.appendingPathComponent("Ferry/bookmarks.json")  // where bookmarks lived before the rename
         bookmarks = load("bookmarks.json") ?? (try? JSONDecoder().decode([Bookmark].self, from: Data(contentsOf: old)))
-            ?? [Bookmark(nickname: "Home Folder", proto: .local, port: 0, path: NSHomeDirectory())]
+            ?? [Bookmark(nickname: "Home Folder", proto: .local, port: 0, path: homeDir)]
         favorites = load("favorites.json") ?? []
         log = load("log.json") ?? []
         records = load("syncs.json") ?? []
@@ -114,10 +117,10 @@ import AppKit
         save(bookmarks, "bookmarks.json")
         if iCloud { readCloud(); watchCloud() }
         updateWatchers()
-        let local = Pane(service: LocalService(root: NSHomeDirectory())), empty = Pane()
+        let local = Pane(service: LocalService(root: homeDir)), empty = Pane()
         panes = [local, empty]
         activeID = empty.id  // so the first bookmark you click opens on the right
-        Task { await local.open(NSHomeDirectory(), remember: false) }
+        Task { await local.open(homeDir, remember: false) }
     }
     private func load<T: Decodable>(_ name: String) -> T? { try? JSONDecoder().decode(T.self, from: Data(contentsOf: dir.appendingPathComponent(name))) }
     private func save<T: Encodable>(_ value: T, _ name: String) {
@@ -169,17 +172,17 @@ import AppKit
             message = "Connection failed: \(error.localizedDescription)"
         }
     }
-    func openLocal(in pane: Pane? = nil, at path: String = NSHomeDirectory()) async {
+    func openLocal(in pane: Pane? = nil, at path: String = homeDir) async {
         let p = pane ?? connectTarget
         activeID = p.id
         p.close()
-        p.service = LocalService(root: NSHomeDirectory()); p.home = NSHomeDirectory()
+        p.service = LocalService(root: homeDir); p.home = homeDir
         await p.open(path, remember: false)
     }
 
     /// The service for a saved location, connected or not. nil is this Mac's disk.
     func service(for id: UUID?) -> FileService? {
-        guard let id else { return LocalService(root: NSHomeDirectory()) }
+        guard let id else { return LocalService(root: homeDir) }
         if let s = panes.first(where: { $0.locationID == id })?.service { return s }
         return bookmarks.first { $0.id == id }.map { makeService($0, password: Keychain.get($0)) }
     }
@@ -599,4 +602,31 @@ func bookmark(fromQuickConnect text: String) -> Bookmark {
     }
     b.host = host; b.user = u.user ?? ""; b.port = u.port ?? b.proto.defaultPort; b.path = u.path
     return b
+}
+
+// MARK: Demo scenes (for screenshots; only with TECHNODUCK_HOME set)
+
+extension Store {
+    /// Puts the window in one of the scenes used for the promo video, using the demo fixtures in TECHNODUCK_HOME.
+    func stage(_ scene: String) async {
+        guard isDemo, scene != "empty" else { return }
+        let servers = bookmarks.filter { $0.proto == .webdav }
+        guard servers.count >= 2 else { return }
+        await panes[0].open(homeDir + "/Sites/duckpond", remember: false)
+        await connect(servers[0], in: panes[1])
+        switch scene {
+        case "four":
+            addPane(); await connect(servers[1], in: panes[2])
+            addPane(); await openLocal(in: panes[3], at: homeDir + "/Backups")
+        case "dryrun":
+            await sync(.upload, panes[0], panes[1], dryRun: true)
+        case "timeline":
+            await sync(.upload, panes[0], panes[1], dryRun: false)
+            showInspector = true; inspectorTab = .timeline
+        default: break
+        }
+        let pick = panes[0].files.filter { ["index.html", "styles.css", "assets"].contains($0.name) }
+        panes[0].selection = Set(pick.map(\.id))
+        activeID = panes[0].id
+    }
 }

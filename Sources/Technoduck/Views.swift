@@ -93,7 +93,7 @@ struct StatusBar: View {
         }
         .font(.callout).foregroundStyle(.secondary)
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(.bar)
+        .themeBackground(store.theme.bar, .bar)
         .overlay(alignment: .top) { Divider() }
     }
 }
@@ -275,7 +275,7 @@ struct ConnectionSheet: View {
                     TextField("Username", text: $bookmark.user, prompt: Text("Optional"))
                     SecureField("Password", text: $password, prompt: Text(bookmark.proto == .sftp ? "Leave empty to use your SSH key" : "Optional"))
                 }
-                TextField("Start folder", text: $bookmark.path, prompt: Text(bookmark.proto == .local ? NSHomeDirectory() : "Home folder"))
+                TextField("Start folder", text: $bookmark.path, prompt: Text(bookmark.proto == .local ? homeDir : "Home folder"))
                 if !isExisting { Toggle("Add to Bookmarks", isOn: $saveBookmark) }
                 Section("Sync") {
                     TextField("Exclude", text: Binding(get: { bookmark.excludes ?? "" }, set: { bookmark.excludes = $0.isEmpty ? nil : $0 }),

@@ -38,7 +38,7 @@ extension FileService {
 
 func makeService(_ b: Bookmark, password: String) -> FileService {
     switch b.proto {
-    case .local: LocalService(root: b.path.isEmpty ? NSHomeDirectory() : b.path)
+    case .local: LocalService(root: b.path.isEmpty ? homeDir : b.path)
     case .ftp, .ftps: FTPService(b: b, password: password)
     case .sftp: SFTPService(b: b, password: password)
     case .webdav, .webdavs: WebDAVService(b: b, password: password)
@@ -86,7 +86,7 @@ struct LocalService: FileService {
         try FileManager.default.copyItem(at: local, to: URL(fileURLWithPath: remote))
     }
     func folderSize(_ dir: String) async -> (bytes: Int64, complete: Bool) {
-        let home = NSHomeDirectory()
+        let home = homeDir
         // Other apps' containers would trigger a privacy prompt on every visit.
         let skip = [home + "/Library/Containers", home + "/Library/Group Containers"]
         var total: Int64 = 0

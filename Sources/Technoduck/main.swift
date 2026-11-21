@@ -25,15 +25,24 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
             return
         }
         window.orderFront(nil)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [self] in
-            let view = window.contentView!.superview ?? window.contentView!
-            guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
-            view.cacheDisplay(in: view.bounds, to: rep)
-            do {
-                try FileManager.default.createDirectory(at: URL(fileURLWithPath: shotPath).deletingLastPathComponent(), withIntermediateDirectories: true)
-                try rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: shotPath))
-                exit(0)
-            } catch { fputs("screenshot failed: \(error)\n", stderr); exit(1) }
+        // `--scene name` stages a demo scene first (see Store.stage); every visible window is saved, sheets as out-1.png, …
+        let args = CommandLine.arguments, scene = args.firstIndex(of: "--scene").flatMap { $0 + 1 < args.count ? args[$0 + 1] : nil }
+        if scene == "four" || scene == "timeline" { window.setContentSize(NSSize(width: 1900, height: 900)) }
+        Task { @MainActor [self] in
+            if let scene { await store.stage(scene) }
+            try? await Task.sleep(for: .seconds(scene == nil ? 2 : 3))
+            let shot = URL(fileURLWithPath: shotPath)
+            try? FileManager.default.createDirectory(at: shot.deletingLastPathComponent(), withIntermediateDirectories: true)
+            let windows = [window!] + NSApp.windows.filter { $0 !== window && $0.isVisible && $0.sheetParent != nil }
+            for (i, w) in windows.enumerated() {
+                let view = w.contentView!.superview ?? w.contentView!
+                guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(1) }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                let url = i == 0 ? shot : shot.deletingPathExtension().appendingPathExtension("\(i).png")
+                do { try rep.representation(using: .png, properties: [:])!.write(to: url) }
+                catch { fputs("screenshot failed: \(error)\n", stderr); exit(1) }
+            }
+            exit(0)
         }
     }
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool { true }
@@ -42,6 +51,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     @objc func refreshAll(_ sender: Any?) { Task { await store.refreshAll() } }
     @objc func showActivity(_ sender: Any?) { store.showInspector.toggle() }
     @objc func addPane(_ sender: Any?) { store.addPane() }
+    @objc func setTheme(_ sender: NSMenuItem) { store.theme = Theme(rawValue: sender.representedObject as? String ?? "") ?? .system }
     @objc func toggleICloud(_ sender: Any?) { store.setICloud(!store.iCloud) }
     @objc func restoreBookmarks(_ sender: Any?) { store.restoreLibrary() }
     @objc func showBookmarkBackups(_ sender: Any?) {
@@ -51,6 +61,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleHidden(_:)) { item.state = store.showHidden ? .on : .off }
         if item.action == #selector(toggleICloud(_:)) { item.state = store.iCloud ? .on : .off }
+        if item.action == #selector(setTheme(_:)) { item.state = store.theme.rawValue == item.representedObject as? String ? .on : .off }
         if item.action == #selector(addPane(_:)) { return store.panes.count < 4 }
         return true
     }
@@ -74,6 +85,13 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     view.addItem(withTitle: "Show Hidden Files", action: #selector(AppDelegate.toggleHidden(_:)), keyEquivalent: ".").keyEquivalentModifierMask = [.command, .shift]
     view.addItem(withTitle: "Refresh", action: #selector(AppDelegate.refreshAll(_:)), keyEquivalent: "r")
     view.addItem(withTitle: "Add Browser Pane", action: #selector(AppDelegate.addPane(_:)), keyEquivalent: "t")
+    view.addItem(.separator())
+    let themes = NSMenu(title: "Theme")
+    for t in Theme.allCases {
+        themes.addItem(withTitle: t.title, action: #selector(AppDelegate.setTheme(_:)), keyEquivalent: "").representedObject = t.rawValue
+        if t == .system { themes.addItem(.separator()) }
+    }
+    view.addItem(withTitle: "Theme", action: nil, keyEquivalent: "").submenu = themes
     view.addItem(.separator())
     view.addItem(withTitle: "Transfers & Timeline", action: #selector(AppDelegate.showActivity(_:)), keyEquivalent: "t").keyEquivalentModifierMask = [.command, .option]
     let marks = NSMenu(title: "Bookmarks")

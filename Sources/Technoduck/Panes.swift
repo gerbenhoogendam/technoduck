@@ -17,9 +17,11 @@ struct RootView: View {
                 ForEach(Array(store.panes.enumerated()), id: \.element.id) { i, p in
                     HStack(spacing: 0) {
                         if i > 0 { CenterStrip(left: store.panes[i - 1], right: p); Divider() }
-                        PaneView(pane: p, editing: $editing)
+                        // Clipped, so a table wider than its pane can't push the strip out of view.
+                        PaneView(pane: p, editing: $editing).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading).clipped()
                     }
-                    .frame(minWidth: i > 0 ? 330 : 280, maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(minWidth: i > 0 ? 360 : 300, maxWidth: .infinity, maxHeight: .infinity)
+                    .clipped()
                 }
             }
             .id(store.panes.map(\.id))
@@ -45,6 +47,8 @@ struct RootView: View {
                     .help("Transfers and timeline")
             }
         }
+        .tint(store.theme.accent)
+        .onChange(of: store.theme, initial: true) { NSApp.appearance = store.theme.appearance }
         .sheet(item: $editing) { b in ConnectionSheet(bookmark: b) }
         .sheet(item: $store.plan) { p in SyncPlanSheet(plan: p) }
         .navigationTitle("Technoduck")
@@ -78,6 +82,8 @@ struct Sidebar: View {
             }
         }
         .listStyle(.sidebar)
+        .scrollContentBackground(store.theme.sidebar == nil ? .automatic : .hidden)
+        .background(store.theme.sidebar ?? .clear)
     }
 }
 
@@ -92,7 +98,7 @@ struct FavoriteRow: View {
         Button { Task { await store.open(f) } } label: {
             HStack(spacing: 8) {
                 Image(systemName: f.bookmarkID == nil ? "laptopcomputer" : b?.proto.symbol ?? "questionmark.folder")
-                    .foregroundStyle(f.bookmarkID == nil ? Color.secondary : Color.accentColor)
+                    .foregroundStyle(f.bookmarkID == nil ? Color.secondary : store.theme.accent)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(place).fontWeight(.semibold).lineLimit(1)
@@ -134,7 +140,7 @@ struct PaneView: View {
             if pane.service == nil { EmptyPane(pane: pane, editing: $editing) } else { table }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay { if dropping { RoundedRectangle(cornerRadius: 4).strokeBorder(Color.accentColor, lineWidth: 3).allowsHitTesting(false) } }
+        .overlay { if dropping { RoundedRectangle(cornerRadius: 4).strokeBorder(store.theme.accent, lineWidth: 3).allowsHitTesting(false) } }
         .onDrop(of: [.fileURL, .utf8PlainText], isTargeted: $dropping) { providers in
             let target = pane
             Task { let (urls, refs) = await loadDrop(providers); await store.drop(urls: urls, into: target); await store.drop(refs: refs, into: target) }
@@ -164,7 +170,7 @@ struct PaneView: View {
                 .draggable("technoduck-pane:\(pane.id.uuidString)")
                 .help("Drag onto another pane to swap places")
             Image(systemName: pane.service == nil ? "circle.dashed" : pane.isLocal ? "laptopcomputer" : (pane.bookmark?.proto.symbol ?? "server.rack"))
-                .foregroundStyle(isActive ? Color.accentColor : Color.secondary)
+                .foregroundStyle(isActive ? store.theme.accent : Color.secondary)
             if pane.service != nil {
                 Button { Task { await pane.back() } } label: { Image(systemName: "chevron.left") }.disabled(pane.history.isEmpty).help("Back")
                 Button { Task { await pane.open(parentPath(pane.path)) } } label: { Image(systemName: "chevron.up") }.disabled(pane.path == "/").help("Enclosing folder")
@@ -208,8 +214,8 @@ struct PaneView: View {
         .buttonStyle(.borderless)
         .font(.callout)
         .padding(.horizontal, 10).frame(height: 34)
-        .background(.bar)
-        .overlay(alignment: .top) { if isActive { Rectangle().fill(Color.accentColor).frame(height: 2) } }
+        .themeBackground(store.theme.bar, .bar)
+        .overlay(alignment: .top) { if isActive { Rectangle().fill(store.theme.gradient).frame(height: 2) } }
     }
 
     private var saved: Bookmark? { store.bookmarks.first { $0.id == pane.bookmark?.id } }
@@ -222,13 +228,13 @@ struct PaneView: View {
                         .resizable().frame(width: 16, height: 16)
                 }
             }
-            .width(min: 140, ideal: 240)
+            .width(min: 100, ideal: 240)
             TableColumn("Size", value: \.size) { f in sizeText(f).foregroundStyle(.secondary).monospacedDigit() }
-                .width(min: 60, ideal: 80)
+                .width(min: 56, ideal: 80)
             TableColumn("Modified") { f in Text(f.modified.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "--").foregroundStyle(.secondary) }
-                .width(min: 100, ideal: 140)
+                .width(min: 80, ideal: 140)
             TableColumn("Permissions") { f in Text(f.permissions).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary) }
-                .width(min: 70, ideal: 90)
+                .width(min: 50, ideal: 90)
         } rows: {
             ForEach(rows) { f in TableRow(f).itemProvider { dragItem(f) } }
         }
@@ -267,6 +273,9 @@ struct PaneView: View {
             else if pane.isLocal { items.forEach { NSWorkspace.shared.open(URL(fileURLWithPath: $0.path)) } }
             else if let o = store.panes.first(where: { $0 !== pane && $0.isLocal }) { copy(items, to: o) }
         }
+        .scrollContentBackground(store.theme.canvas == nil ? .automatic : .hidden)
+        .alternatingRowBackgrounds(store.theme.canvas == nil ? .automatic : .disabled)
+        .background(store.theme.canvas ?? .clear)
         .overlay { if pane.busy { ProgressView().controlSize(.large) } }
     }
 
@@ -329,7 +338,7 @@ struct EmptyPane: View {
         ScrollView {
             LazyVGrid(columns: cols, spacing: 14) {
                 Button { Task { await store.openLocal(in: pane) } } label: {
-                    LocationCard(symbol: "laptopcomputer", title: "This Mac", subtitle: NSHomeDirectory(), kind: "Local Disk")
+                    LocationCard(symbol: "laptopcomputer", title: "This Mac", subtitle: homeDir, kind: "Local Disk")
                 }
                 .buttonStyle(.plain)
                 ForEach(store.bookmarks) { b in
@@ -351,15 +360,17 @@ struct EmptyPane: View {
             }
             .padding(16)
         }
+        .background(store.theme.canvas ?? .clear)
     }
 }
 
 struct LocationCard: View {
+    @Environment(Store.self) private var store
     let symbol: String, title: String, subtitle: String, kind: String
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: symbol).font(.title2).foregroundStyle(.white)
-                .frame(width: 42, height: 42).background(.tint, in: RoundedRectangle(cornerRadius: 10))
+            Image(systemName: symbol).font(.title2).foregroundStyle(store.theme.onAccent)
+                .frame(width: 42, height: 42).background(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 3) {
                 Text(title).font(.headline).lineLimit(1)
                 Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -393,9 +404,9 @@ struct CenterStrip: View {
             Divider().frame(width: 30).padding(.vertical, 4)
             Button { showSync = true } label: {
                 Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.title3.weight(.semibold)).foregroundStyle(.white)
+                    .font(.title3.weight(.semibold)).foregroundStyle(ready ? store.theme.onAccent : .white)
                     .frame(width: 40, height: 40)
-                    .background(Circle().fill(ready ? Color.accentColor : Color.secondary.opacity(0.4)))
+                    .background(Circle().fill(ready ? AnyShapeStyle(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing)) : AnyShapeStyle(Color.secondary.opacity(0.4))))
             }
             .buttonStyle(.plain)
             .disabled(!ready || store.planning)
@@ -406,7 +417,7 @@ struct CenterStrip: View {
         }
         .buttonStyle(.bordered)
         .frame(width: 54)
-        .background(.background.secondary)
+        .themeBackground(store.theme.strip, .background.secondary)
     }
 
     private func copy(_ from: Pane, _ to: Pane) {
