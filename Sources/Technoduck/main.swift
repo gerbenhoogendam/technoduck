@@ -41,8 +41,17 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     @objc func toggleHidden(_ sender: Any?) { store.showHidden.toggle() }
     @objc func refreshAll(_ sender: Any?) { Task { await store.refreshAll() } }
     @objc func showActivity(_ sender: Any?) { store.showInspector.toggle() }
+    @objc func addPane(_ sender: Any?) { store.addPane() }
+    @objc func toggleICloud(_ sender: Any?) { store.setICloud(!store.iCloud) }
+    @objc func restoreBookmarks(_ sender: Any?) { store.restoreLibrary() }
+    @objc func showBookmarkBackups(_ sender: Any?) {
+        try? FileManager.default.createDirectory(at: store.libraryBackups, withIntermediateDirectories: true)
+        NSWorkspace.shared.open(store.libraryBackups)
+    }
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         if item.action == #selector(toggleHidden(_:)) { item.state = store.showHidden ? .on : .off }
+        if item.action == #selector(toggleICloud(_:)) { item.state = store.iCloud ? .on : .off }
+        if item.action == #selector(addPane(_:)) { return store.panes.count < 4 }
         return true
     }
 }
@@ -64,12 +73,18 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     let view = NSMenu(title: "View")
     view.addItem(withTitle: "Show Hidden Files", action: #selector(AppDelegate.toggleHidden(_:)), keyEquivalent: ".").keyEquivalentModifierMask = [.command, .shift]
     view.addItem(withTitle: "Refresh", action: #selector(AppDelegate.refreshAll(_:)), keyEquivalent: "r")
+    view.addItem(withTitle: "Add Browser Pane", action: #selector(AppDelegate.addPane(_:)), keyEquivalent: "t")
     view.addItem(.separator())
     view.addItem(withTitle: "Transfers & Timeline", action: #selector(AppDelegate.showActivity(_:)), keyEquivalent: "t").keyEquivalentModifierMask = [.command, .option]
+    let marks = NSMenu(title: "Bookmarks")
+    marks.addItem(withTitle: "Sync Bookmarks with iCloud Drive", action: #selector(AppDelegate.toggleICloud(_:)), keyEquivalent: "")
+    marks.addItem(.separator())
+    marks.addItem(withTitle: "Restore Bookmarks from Backup…", action: #selector(AppDelegate.restoreBookmarks(_:)), keyEquivalent: "")
+    marks.addItem(withTitle: "Show Bookmark Backups in Finder", action: #selector(AppDelegate.showBookmarkBackups(_:)), keyEquivalent: "")
     let window = NSMenu(title: "Window")
     window.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
     window.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-    for sub in [app, edit, view, window] { let item = NSMenuItem(); item.submenu = sub; menu.addItem(item) }
+    for sub in [app, edit, view, marks, window] { let item = NSMenuItem(); item.submenu = sub; menu.addItem(item) }
     return menu
 }
 
@@ -88,7 +103,10 @@ func syncPlanSelfTest() {
     precondition(Bookmark(excludes: " .git,node_modules\n*.log ").excludeList == [".git", "node_modules", "*.log"])
     // Bookmarks saved before the sync fields existed must still load.
     let old = try! JSONDecoder().decode(Bookmark.self, from: Data(#"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","nickname":"","proto":"SFTP","host":"h","port":22,"user":"","path":""}"#.utf8))
-    precondition(old.host == "h" && old.autoSync == nil && old.excludeList.isEmpty)
+    precondition(old.host == "h" && old.autoSync == nil && old.excludeList.isEmpty && old.backupFolder == nil)
+    // Sync records saved before panes could be servers on both sides must still load.
+    let rec = try! JSONDecoder().decode(SyncRecord.self, from: Data(#"{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","date":0,"bookmarkID":"6F9619FF-8B86-D011-B42D-00C04FC964FF","title":"t","localRoot":"/l","remoteRoot":"/r","applied":[{"op":{"id":"6F9619FF-8B86-D011-B42D-00C04FC964FF","to":"remote","rel":"x","isDir":false,"size":1,"overwrite":false,"reason":""}}],"rolledBack":false}"#.utf8))
+    precondition(rec.aBookmarkID == nil && rec.applied[0].op.to == .b)
 }
 
 /// Syncs two temp folders through LocalService, then undoes it and checks everything is back.
@@ -116,13 +134,20 @@ func syncEngineSelfTest() async throws {
     let lw = try await walk(LocalService(root: L), L, hidden: false, strict: true, exclude: ["*.log"]), rw = try await walk(remote, R, hidden: false, strict: true)
     let ops = makePlan(local: lw.files, remote: rw.files, mode: .upload)
     precondition(ops.map(\.rel) == ["a.txt", "sub", "sub/b.txt"], "\(ops.map(\.rel))")
-    let engine = SyncEngine(remote: remote, localRoot: L, remoteRoot: R, backups: root.appendingPathComponent("backup"))
+    let engine = SyncEngine(a: LocalService(root: L), b: remote, aRoot: L, bRoot: R, backups: root.appendingPathComponent("backup"))
     var applied: [Applied] = []
     for op in ops { applied.append(try await engine.apply(op)) }
     precondition(get(R + "/a.txt") == "new" && get(R + "/sub/b.txt") == "two" && get(R + "/.hidden") == nil)
     precondition(applied[0].backup != nil && applied[2].backup == nil)
     for a in applied.reversed() { try await engine.undo(a) }
     precondition(get(R + "/a.txt") == "old content" && !fm.fileExists(atPath: R + "/sub"))
+
+    // Server to server goes through a temp file: two non-local services.
+    let S = root.appendingPathComponent("S").path
+    try fm.createDirectory(atPath: S, withIntermediateDirectories: true)
+    let s2s = SyncEngine(a: remote, b: TestDisk(disk: LocalService(root: S)), aRoot: R, bRoot: S, backups: nil)
+    _ = try await s2s.apply(SyncOp(to: .b, rel: "a.txt", size: 11))
+    precondition(get(S + "/a.txt") == "old content")
 }
 
 if CommandLine.arguments.contains("--self-test") {

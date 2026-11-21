@@ -39,6 +39,8 @@ struct Bookmark: Codable, Identifiable, Hashable {
     var syncRemote: String?
     /// Upload changes in `syncLocal` to `syncRemote` as they happen.
     var autoSync: Bool?
+    /// Where one-click backups of this bookmark go.
+    var backupFolder: String?
     var excludeList: [String] {
         (excludes ?? "").split { $0 == "," || $0.isNewline }.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
@@ -102,15 +104,38 @@ struct LogEvent: Codable, Identifiable {
     var items: [String] = []
 }
 
-enum Side: String, Codable { case local, remote }
+/// The two ends of a sync or copy: A is the left (or source) pane, B the right (or target).
+/// Raw values date from when A was always this Mac and B the server.
+enum Side: String, Codable { case a = "local", b = "remote" }
+
+/// A folder on some location, as used by a sync or copy. `location` nil means this Mac's disk.
+struct Endpoint {
+    let service: FileService
+    let root: String
+    var location: UUID?
+    var bookmark: Bookmark?
+}
+
+/// A folder pinned in the sidebar. `bookmarkID` nil means this Mac's disk.
+struct Favorite: Codable, Identifiable, Hashable {
+    var id = UUID()
+    var bookmarkID: UUID?
+    var path: String
+}
+
+/// What syncs through iCloud Drive and gets backed up daily.
+struct Library: Codable {
+    var bookmarks: [Bookmark]
+    var favorites: [Favorite]
+}
 
 enum SyncMode: String, CaseIterable, Identifiable {
     case upload, download, both
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .upload: "A → B  ·  Local to server"
-        case .download: "B → A  ·  Server to local"
+        case .upload: "A → B  ·  Left to right"
+        case .download: "B → A  ·  Right to left"
         case .both: "A ⇄ B  ·  Both ways, newest wins"
         }
     }
@@ -132,14 +157,14 @@ struct SyncOp: Codable, Hashable, Identifiable {
 struct SyncPlan: Identifiable {
     let id = UUID()
     var mode: SyncMode
-    var localRoot: String
-    var remoteRoot: String
+    var a: Endpoint
+    var b: Endpoint
     var ops: [SyncOp]
     func files(to s: Side) -> [SyncOp] { ops.filter { $0.to == s && !$0.isDir } }
     func bytes(to s: Side) -> Int64 { files(to: s).reduce(0) { $0 + $1.size } }
     var summary: String {
         var parts: [String] = []
-        for (s, arrow) in [(Side.remote, "↑"), (.local, "↓")] where !files(to: s).isEmpty {
+        for (s, arrow) in [(Side.b, "→"), (.a, "←")] where !files(to: s).isEmpty {
             parts.append("\(arrow) \(files(to: s).count) files, \(fmtBytes(bytes(to: s)))")
         }
         let dirs = ops.filter(\.isDir).count
@@ -157,8 +182,11 @@ struct Applied: Codable {
 struct SyncRecord: Codable, Identifiable {
     var id = UUID()
     var date = Date()
-    var bookmarkID: UUID
+    /// Locations of A and B; nil means this Mac's disk.
+    var aBookmarkID: UUID?
+    var bookmarkID: UUID?
     var title: String
+    // Roots of A and B (names kept so records saved before A could be a server still load).
     var localRoot: String
     var remoteRoot: String
     var applied: [Applied] = []

@@ -1,10 +1,13 @@
 import Foundation
 import AppKit
 
-/// One side of the dual-pane window: the local disk on the left, a server on the right.
-@MainActor @Observable final class Pane {
+/// One file browser. Shows this Mac's disk or a server; without a location it offers the bookmarks.
+@MainActor @Observable final class Pane: Identifiable {
+    let id = UUID()
     var service: FileService?
     var bookmark: Bookmark?
+    /// The folder this location starts in.
+    var home = "/"
     var path = "/"
     var files: [RemoteFile] = []
     var selection = Set<RemoteFile.ID>()
@@ -19,6 +22,11 @@ import AppKit
     init(service: FileService? = nil) { self.service = service }
 
     var selected: [RemoteFile] { files.filter { selection.contains($0.id) } }
+    var isLocal: Bool { service is LocalService }
+    var title: String { service == nil ? "No Location" : bookmark?.title ?? "This Mac" }
+    /// Identifies the location for favorites and undo: nil is this Mac's disk.
+    var locationID: UUID? { isLocal ? nil : bookmark?.id }
+    var endpoint: Endpoint? { service.map { Endpoint(service: $0, root: path, location: locationID, bookmark: bookmark) } }
 
     func open(_ dir: String, remember: Bool = true) async {
         guard let service else { return }
@@ -61,43 +69,54 @@ import AppKit
 @MainActor @Observable final class Store {
     enum Tab { case transfers, timeline }
 
-    var bookmarks: [Bookmark] = [] { didSet { save(bookmarks, "bookmarks.json"); updateWatcher() } }
+    var bookmarks: [Bookmark] = [] { didSet { libraryChanged(before: Library(bookmarks: oldValue, favorites: favorites)) } }
+    var favorites: [Favorite] = [] { didSet { libraryChanged(before: Library(bookmarks: bookmarks, favorites: oldValue)) } }
+    var panes: [Pane] = []
+    var activeID: UUID?
     var transfers: [Transfer] = []
     var log: [LogEvent] = []
     var records: [SyncRecord] = []
     var showInspector = false
     var inspectorTab = Tab.transfers
     var showHidden = UserDefaults.standard.bool(forKey: "showHidden") { didSet { UserDefaults.standard.set(showHidden, forKey: "showHidden") } }
+    var iCloud = UserDefaults.standard.bool(forKey: "iCloudSync")
     var message = ""
     var planning = false
     var plan: SyncPlan?
-
-    let local = Pane(service: LocalService(root: NSHomeDirectory()))
-    let remote = Pane()
 
     private static let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
     private let dir = support.appendingPathComponent("Technoduck")
     private var backups: URL { dir.appendingPathComponent("Backups") }
     private let editDir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0].appendingPathComponent("Technoduck/Edit")
+    private let cloudDir = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs/Technoduck")
+    private var cloudFile: URL { cloudDir.appendingPathComponent("library.json") }
+    var libraryBackups: URL { (iCloud ? cloudDir : dir).appendingPathComponent("Bookmark Backups") }
 
-    @ObservationIgnored private var watcher: FolderWatcher?
-    @ObservationIgnored private var watchedPath: String?
-    @ObservationIgnored private var autoBusy = false
-    @ObservationIgnored private var autoAgain = false
-    private struct Edit { let remote: String; let bookmarkID: UUID; var stamp: Date? }
+    @ObservationIgnored private var loading = true
+    @ObservationIgnored private var applyingCloud = false
+    @ObservationIgnored private var cloudStamp: Date?
+    @ObservationIgnored private var cloudWatcher: FolderWatcher?
+    @ObservationIgnored private var watchers: [UUID: (path: String, watcher: FolderWatcher)] = [:]
+    @ObservationIgnored private var autoBusy = Set<UUID>()
+    @ObservationIgnored private var autoAgain = Set<UUID>()
+    private struct Edit { let remote: String; let location: UUID?; let bookmark: Bookmark?; let pane: Pane; var stamp: Date? }
     @ObservationIgnored private var edits: [String: Edit] = [:]
     @ObservationIgnored private var editWatcher: FolderWatcher?
-
-    /// The connected bookmark as saved (with any edits made since connecting).
-    var current: Bookmark? { bookmarks.first { $0.id == remote.bookmark?.id } ?? remote.bookmark }
 
     init() {
         let old = Self.support.appendingPathComponent("Ferry/bookmarks.json")  // where bookmarks lived before the rename
         bookmarks = load("bookmarks.json") ?? (try? JSONDecoder().decode([Bookmark].self, from: Data(contentsOf: old)))
             ?? [Bookmark(nickname: "Home Folder", proto: .local, port: 0, path: NSHomeDirectory())]
-        save(bookmarks, "bookmarks.json")
+        favorites = load("favorites.json") ?? []
         log = load("log.json") ?? []
         records = load("syncs.json") ?? []
+        loading = false
+        save(bookmarks, "bookmarks.json")
+        if iCloud { readCloud(); watchCloud() }
+        updateWatchers()
+        let local = Pane(service: LocalService(root: NSHomeDirectory())), empty = Pane()
+        panes = [local, empty]
+        activeID = empty.id  // so the first bookmark you click opens on the right
         Task { await local.open(NSHomeDirectory(), remember: false) }
     }
     private func load<T: Decodable>(_ name: String) -> T? { try? JSONDecoder().decode(T.self, from: Data(contentsOf: dir.appendingPathComponent(name))) }
@@ -108,26 +127,93 @@ import AppKit
 
     func visible(_ files: [RemoteFile]) -> [RemoteFile] { showHidden ? files : files.filter { !$0.name.hasPrefix(".") } }
 
-    func connect(_ b: Bookmark, password: String? = nil) async {
+    // MARK: Panes
+
+    var active: Pane? { panes.first { $0.id == activeID } ?? panes.first }
+
+    func addPane() {
+        guard panes.count < 4 else { return }
+        let p = Pane(); panes.append(p); activeID = p.id
+    }
+    func closePane(_ p: Pane) {
+        guard panes.count > 1 else { return }
+        p.close(); panes.removeAll { $0 === p }
+        if activeID == p.id { activeID = panes.last?.id }
+    }
+    func movePane(_ id: UUID, to target: Pane) {
+        guard let from = panes.firstIndex(where: { $0.id == id }), let to = panes.firstIndex(where: { $0 === target }), from != to else { return }
+        panes.insert(panes.remove(at: from), at: to)
+    }
+    func refreshAll() async { for p in panes { await p.refresh() } }
+
+    /// Where a bookmark opened from the sidebar goes: the active pane if it's empty, else any empty pane, else the active pane.
+    private var connectTarget: Pane {
+        if let a = active, a.service == nil { return a }
+        return panes.first { $0.service == nil } ?? active ?? panes[0]
+    }
+
+    func connect(_ b: Bookmark, password: String? = nil, in pane: Pane? = nil, at path: String? = nil) async {
+        let p = pane ?? connectTarget
+        activeID = p.id
         let svc = makeService(b, password: password ?? Keychain.get(b))
-        remote.busy = true; message = "Connecting to \(b.title)…"
+        p.busy = true; message = "Connecting to \(b.title)…"
         do {
             let start = try await svc.start()
-            remote.close()
-            remote.service = svc; remote.bookmark = b
+            p.close()
+            p.service = svc; p.bookmark = b; p.home = start
             message = ""
-            // Reopen the folder pair this server was last synced with.
-            if let p = b.syncLocal, FileManager.default.fileExists(atPath: p) { await local.open(p) }
-            if let p = b.syncRemote { await remote.open(p, remember: false) }
-            if b.syncRemote == nil || remote.error != nil { await remote.open(start, remember: false) }
-            updateWatcher()
+            await p.open(path ?? start, remember: false)
+            if path != nil, p.error != nil { await p.open(start, remember: false) }
         } catch {
-            remote.busy = false
+            p.busy = false
             message = "Connection failed: \(error.localizedDescription)"
         }
     }
-    func disconnect() { remote.close(); message = ""; updateWatcher() }
-    func refreshAll() async { await local.refresh(); await remote.refresh() }
+    func openLocal(in pane: Pane? = nil, at path: String = NSHomeDirectory()) async {
+        let p = pane ?? connectTarget
+        activeID = p.id
+        p.close()
+        p.service = LocalService(root: NSHomeDirectory()); p.home = NSHomeDirectory()
+        await p.open(path, remember: false)
+    }
+
+    /// The service for a saved location, connected or not. nil is this Mac's disk.
+    func service(for id: UUID?) -> FileService? {
+        guard let id else { return LocalService(root: NSHomeDirectory()) }
+        if let s = panes.first(where: { $0.locationID == id })?.service { return s }
+        return bookmarks.first { $0.id == id }.map { makeService($0, password: Keychain.get($0)) }
+    }
+    private func excludes(_ e: Endpoint) -> [String] {
+        guard let b = e.bookmark else { return [] }
+        return (bookmarks.first { $0.id == b.id } ?? b).excludeList
+    }
+
+    // MARK: Favorites and start folders
+
+    func canFavorite(_ p: Pane) -> Bool { p.isLocal || bookmarks.contains { $0.id == p.bookmark?.id } }
+    func favorite(_ p: Pane, _ path: String) -> Favorite? { favorites.first { $0.bookmarkID == p.locationID && $0.path == path } }
+    func toggleFavorite(_ p: Pane, _ path: String) {
+        if let f = favorite(p, path) { favorites.removeAll { $0.id == f.id } }
+        else if canFavorite(p) { favorites.append(Favorite(bookmarkID: p.locationID, path: path)) }
+    }
+    /// Opens a favorite in a pane already showing its location (the active one first), else like a bookmark.
+    func open(_ f: Favorite) async {
+        let showing = [active].compactMap { $0 } + panes
+        if let p = showing.first(where: { $0.service != nil && $0.locationID == f.bookmarkID }) {
+            activeID = p.id; await p.open(f.path); return
+        }
+        guard let id = f.bookmarkID else { await openLocal(at: f.path); return }
+        guard let b = bookmarks.first(where: { $0.id == id }) else { message = "The server of this favorite was deleted."; return }
+        await connect(b, at: f.path)
+    }
+
+    func canSetStart(_ p: Pane) -> Bool { bookmarks.contains { $0.id == p.bookmark?.id } }
+    /// Makes `path` the folder this pane's bookmark opens in.
+    func setStartFolder(_ path: String, for p: Pane) {
+        guard let i = bookmarks.firstIndex(where: { $0.id == p.bookmark?.id }) else { return }
+        bookmarks[i].path = path; p.bookmark?.path = path; p.home = path
+        message = "\(bookmarks[i].title) now starts in \(path)"
+    }
 
     // MARK: Timeline
 
@@ -140,57 +226,72 @@ import AppKit
 
     // MARK: Copy, sync, undo
 
-    /// Copies files and folders between the panes. `root` is the folder the items sit in.
-    func copy(_ items: [RemoteFile], from root: String, to side: Side) async {
-        guard let rs = remote.service, let ls = local.service, !items.isEmpty else { return }
-        let (src, dst) = side == .remote ? (ls, rs) : (rs, ls)
-        let dest = side == .remote ? remote : local
-        let ex = current?.excludeList ?? []  // applies inside folders; an item you select yourself is always copied
+    /// Copies `items`, which sit in `src.root`, into `dest`'s current folder.
+    func copy(_ items: [RemoteFile], from src: Endpoint, to dest: Pane) async {
+        guard let dst = dest.endpoint, !items.isEmpty else { return }
+        if src.root == dst.root, src.location == dst.location, (src.service is LocalService) == (dst.service is LocalService) { return }  // onto itself
+        let ex = excludes(src) + excludes(dst)  // applies inside folders; an item you pick yourself is always copied
         message = "Preparing copy…"
         do {
             var a: [String: RemoteFile] = [:], b: [String: RemoteFile] = [:]
             for item in items {
                 a[item.name] = item
-                if item.isDir { for (k, v) in try await walk(src, item.path, hidden: true, strict: true, exclude: ex).files { a[item.name + "/" + k] = v } }
+                if item.isDir { for (k, v) in try await walk(src.service, item.path, hidden: true, strict: true, exclude: ex).files { a[item.name + "/" + k] = v } }
                 guard let d = dest.files.first(where: { $0.name == item.name }) else { continue }
                 b[item.name] = d
-                if d.isDir { for (k, v) in try await walk(dst, d.path, hidden: true, strict: true, exclude: ex).files { b[item.name + "/" + k] = v } }
+                if d.isDir { for (k, v) in try await walk(dst.service, d.path, hidden: true, strict: true, exclude: ex).files { b[item.name + "/" + k] = v } }
             }
-            let up = side == .remote
-            let ops = up ? makePlan(local: a, remote: b, mode: .upload, force: true) : makePlan(local: b, remote: a, mode: .download, force: true)
             message = ""
-            await run(SyncPlan(mode: up ? .upload : .download, localRoot: up ? root : local.path, remoteRoot: up ? remote.path : root, ops: ops),
-                      title: (up ? "Uploaded " : "Downloaded ") + (items.count == 1 ? items[0].name : "\(items.count) items"),
-                      kind: up ? .upload : .download)
+            await run(SyncPlan(mode: .upload, a: src, b: dst, ops: makePlan(local: a, remote: b, mode: .upload, force: true)),
+                      title: "Copied " + (items.count == 1 ? items[0].name : "\(items.count) items") + " to \(dest.title)",
+                      kind: dst.service is LocalService ? .download : .upload)
         } catch { message = "Copy failed: \(error.localizedDescription)" }
     }
 
-    /// Files dropped from Finder onto the server pane.
-    func upload(_ urls: [URL]) async {
+    /// Files dropped from Finder or from a pane showing this Mac.
+    func drop(urls: [URL], into pane: Pane) async {
         for (parent, group) in Dictionary(grouping: urls, by: { $0.deletingLastPathComponent().path }) {
             let items = group.map { u in
                 let v = try? u.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
                 return RemoteFile(name: u.lastPathComponent, path: u.path, isDir: v?.isDirectory ?? false, size: Int64(v?.fileSize ?? 0))
             }
-            await copy(items, from: parent, to: .remote)
+            await copy(items, from: Endpoint(service: LocalService(root: parent), root: parent), to: pane)
+        }
+    }
+    /// Server items dragged from another pane ("technoduck-item:<pane>:<path>"), or a pane header ("technoduck-pane:<pane>").
+    func drop(refs: [String], into pane: Pane) async {
+        if let id = refs.first(where: { $0.hasPrefix("technoduck-pane:") }).flatMap({ UUID(uuidString: String($0.dropFirst(16))) }) {
+            movePane(id, to: pane); return
+        }
+        var bySource: [UUID: Set<String>] = [:]
+        for r in refs where r.hasPrefix("technoduck-item:") {
+            let rest = r.dropFirst(16)
+            guard let colon = rest.firstIndex(of: ":"), let id = UUID(uuidString: String(rest[..<colon])) else { continue }
+            bySource[id, default: []].insert(String(rest[rest.index(after: colon)...]))
+        }
+        for (id, paths) in bySource {
+            guard let src = panes.first(where: { $0.id == id }), let e = src.endpoint else { continue }
+            await copy(src.files.filter { paths.contains($0.path) }, from: e, to: pane)
         }
     }
 
-    /// Compares two folders (by default the panes'); a dry run only shows the plan. `auto` runs quietly for auto-upload.
-    func sync(_ mode: SyncMode, dryRun: Bool, localRoot: String? = nil, remoteRoot: String? = nil, auto: Bool = false) async {
-        guard let rs = remote.service, let ls = local.service else { return }
-        let lp = localRoot ?? local.path, rp = remoteRoot ?? remote.path, hidden = showHidden, ex = current?.excludeList ?? []
-        if !auto, let i = bookmarks.firstIndex(where: { $0.id == remote.bookmark?.id }), bookmarks[i].syncLocal != lp || bookmarks[i].syncRemote != rp {
-            bookmarks[i].syncLocal = lp; bookmarks[i].syncRemote = rp  // remember the pair for next time
-        }
-        planning = true; message = auto ? "" : "Comparing \(lp) with \(rp)…"
+    /// Compares two panes' folders; a dry run only shows the plan.
+    func sync(_ mode: SyncMode, _ left: Pane, _ right: Pane, dryRun: Bool) async {
+        guard let a = left.endpoint, let b = right.endpoint else { return }
+        rememberPair(a, b)
+        await sync(mode, a, b, dryRun: dryRun)
+    }
+    /// `auto` runs quietly for auto-upload.
+    func sync(_ mode: SyncMode, _ a: Endpoint, _ b: Endpoint, dryRun: Bool, auto: Bool = false) async {
+        let hidden = showHidden, ex = excludes(a) + excludes(b)
+        planning = true; message = auto ? "" : "Comparing \(a.root) with \(b.root)…"
         defer { planning = false }
         do {
-            async let l = walk(ls, lp, hidden: hidden, strict: true, limit: 100_000, exclude: ex)
-            async let r = walk(rs, rp, hidden: hidden, strict: true, limit: 100_000, exclude: ex)
+            async let l = walk(a.service, a.root, hidden: hidden, strict: true, limit: 100_000, exclude: ex)
+            async let r = walk(b.service, b.root, hidden: hidden, strict: true, limit: 100_000, exclude: ex)
             let (lw, rw) = try await (l, r)
             guard lw.complete, rw.complete else { throw ServiceError("More than 100,000 files — pick a smaller folder.") }
-            let p = SyncPlan(mode: mode, localRoot: lp, remoteRoot: rp, ops: makePlan(local: lw.files, remote: rw.files, mode: mode))
+            let p = SyncPlan(mode: mode, a: a, b: b, ops: makePlan(local: lw.files, remote: rw.files, mode: mode))
             message = ""
             if dryRun { plan = p }
             else if p.ops.isEmpty { if !auto { message = "Already in sync — nothing to copy." } }
@@ -198,10 +299,11 @@ import AppKit
         } catch { message = "Compare failed: \(error.localizedDescription)" }
     }
 
-    func run(_ p: SyncPlan, title: String, kind: Activity = .sync, quiet: Bool = false) async {
-        guard let rs = remote.service, let b = remote.bookmark else { return }
-        var rec = SyncRecord(bookmarkID: b.id, title: title, localRoot: p.localRoot, remoteRoot: p.remoteRoot)
-        let engine = SyncEngine(remote: rs, localRoot: p.localRoot, remoteRoot: p.remoteRoot, backups: backups.appendingPathComponent(rec.id.uuidString))
+    /// `undoable` false skips the backups of replaced files (for backup snapshots).
+    func run(_ p: SyncPlan, title: String, kind: Activity = .sync, quiet: Bool = false, undoable: Bool = true) async {
+        var rec = SyncRecord(aBookmarkID: p.a.location, bookmarkID: p.b.location, title: title, localRoot: p.a.root, remoteRoot: p.b.root)
+        let engine = SyncEngine(a: p.a.service, b: p.b.service, aRoot: p.a.root, bRoot: p.b.root,
+                                backups: undoable ? backups.appendingPathComponent(rec.id.uuidString) : nil)
         let t = Transfer(kind: kind, name: title, detail: p.summary)
         transfers.insert(t, at: 0)
         if !quiet { showInspector = true; inspectorTab = .transfers }
@@ -210,88 +312,159 @@ import AppKit
             do { rec.applied.append(try await engine.apply(op)); bytes += op.size } catch { errors.append("\(op.rel): \(error.localizedDescription)") }
             t.progress = Double(n + 1) / Double(p.ops.count)
         }
-        if !rec.applied.isEmpty {
+        let canUndo = undoable && !rec.applied.isEmpty
+        if canUndo {
             records.append(rec)
             while records.count > 30 { try? FileManager.default.removeItem(at: backups.appendingPathComponent(records.removeFirst().id.uuidString)) }
             save(records, "syncs.json")
             t.recordID = rec.id
         }
         t.state = errors.isEmpty ? .done : .failed("\(errors.count) of \(p.ops.count) failed — \(errors[0])")
-        addLog(LogEvent(bookmarkID: b.id, kind: kind, title: errors.isEmpty ? title : "\(title) (\(errors.count) failed)",
-                        detail: "\(p.localRoot)  ⇄  \(p.remoteRoot)\n\(p.summary)", bytes: bytes,
-                        recordID: rec.applied.isEmpty ? nil : rec.id,
-                        items: rec.applied.map { ($0.op.to == .remote ? "↑ " : "↓ ") + $0.op.rel + ($0.op.isDir ? "/" : "") }))
+        for id in Set([p.a.bookmark?.id, p.b.bookmark?.id].compactMap { $0 }) {
+            addLog(LogEvent(bookmarkID: id, kind: kind, title: errors.isEmpty ? title : "\(title) (\(errors.count) failed)",
+                            detail: "\(p.a.root)  ⇄  \(p.b.root)\n\(p.summary)", bytes: bytes, recordID: canUndo ? rec.id : nil,
+                            items: rec.applied.map { ($0.op.to == .b ? "→ " : "← ") + $0.op.rel + ($0.op.isDir ? "/" : "") }))
+        }
         await refreshAll()
     }
 
-    /// Puts back what a sync or copy changed: replaced files come from the backup, new files go to the Trash (local) or are deleted (server).
+    /// Puts back what a sync or copy changed: replaced files come from the backup, new files go to the Trash (this Mac) or are deleted (server).
     func rollback(_ id: UUID) async {
         guard let rec = records.first(where: { $0.id == id }), !rec.rolledBack else { return }
-        guard let rs = remote.service, remote.bookmark?.id == rec.bookmarkID else {
-            message = "Connect to \(bookmarks.first { $0.id == rec.bookmarkID }?.title ?? "that server") first to undo this."; return
+        guard let a = service(for: rec.aBookmarkID), let b = service(for: rec.bookmarkID) else {
+            message = "Its server bookmark was deleted, so this can't be undone."; return
         }
-        setRolledBack(id)  // first, so a second click can't run it twice
+        if let i = records.firstIndex(where: { $0.id == id }) { records[i].rolledBack = true; save(records, "syncs.json") }  // first, so a second click can't run it twice
         let dir = backups.appendingPathComponent(rec.id.uuidString)
-        let engine = SyncEngine(remote: rs, localRoot: rec.localRoot, remoteRoot: rec.remoteRoot, backups: dir)
+        let engine = SyncEngine(a: a, b: b, aRoot: rec.localRoot, bRoot: rec.remoteRoot, backups: dir)
         let t = Transfer(kind: .rollback, name: "Undo: \(rec.title)", detail: "\(rec.applied.count) changes")
         transfers.insert(t, at: 0); showInspector = true
         var errors: [String] = []
-        for (n, a) in rec.applied.reversed().enumerated() {
-            do { try await engine.undo(a) } catch { errors.append("\(a.op.rel): \(error.localizedDescription)") }
+        for (n, step) in rec.applied.reversed().enumerated() {
+            do { try await engine.undo(step) } catch { errors.append("\(step.op.rel): \(error.localizedDescription)") }
             t.progress = Double(n + 1) / Double(rec.applied.count)
         }
         if errors.isEmpty { try? FileManager.default.removeItem(at: dir) }
         t.state = errors.isEmpty ? .done : .failed("\(errors.count) could not be undone — \(errors[0]). Backups kept in \(dir.path)")
-        addLog(LogEvent(bookmarkID: rec.bookmarkID, kind: .rollback, title: "Undid \(rec.title)",
-                        detail: errors.isEmpty ? "Restored \(rec.applied.count) changes" : "\(errors.count) could not be undone; backups kept in \(dir.path)",
-                        items: errors))
+        for bid in Set([rec.aBookmarkID, rec.bookmarkID].compactMap { $0 }) {
+            addLog(LogEvent(bookmarkID: bid, kind: .rollback, title: "Undid \(rec.title)",
+                            detail: errors.isEmpty ? "Restored \(rec.applied.count) changes" : "\(errors.count) could not be undone; backups kept in \(dir.path)",
+                            items: errors))
+        }
         await refreshAll()
     }
-    private func setRolledBack(_ id: UUID) {
-        if let i = records.firstIndex(where: { $0.id == id }) { records[i].rolledBack = true; save(records, "syncs.json") }
+
+    // MARK: One-click backup
+
+    /// Asks where backups of `b` go and remembers it.
+    @discardableResult func chooseBackupFolder(for b: Bookmark) -> String? {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true; p.canChooseFiles = false; p.canCreateDirectories = true
+        p.prompt = "Use for Backups"; p.message = "Where should backups of \(b.title) go?"
+        guard p.runModal() == .OK, let u = p.url, let i = bookmarks.firstIndex(where: { $0.id == b.id }) else { return nil }
+        bookmarks[i].backupFolder = u.path
+        return u.path
+    }
+
+    /// Copies the bookmark's start folder into <backup folder>/<name>/<date and time>. The previous snapshot is
+    /// copied first (APFS clones files, so that's instant and takes no space) and only what changed is downloaded.
+    func backUp(_ b: Bookmark) async {
+        guard let saved = bookmarks.first(where: { $0.id == b.id }) else { return }
+        guard let folder = saved.backupFolder ?? chooseBackupFolder(for: saved) else { return }
+        let fm = FileManager.default
+        let svc = panes.first { $0.bookmark?.id == b.id }?.service ?? makeService(saved, password: Keychain.get(saved))
+        let base = URL(fileURLWithPath: folder).appendingPathComponent(saved.title.replacingOccurrences(of: "/", with: "-").replacingOccurrences(of: ":", with: "-"))
+        let stamp = DateFormatter(); stamp.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let dest = base.appendingPathComponent(stamp.string(from: Date()))
+        message = "Backing up \(saved.title)…"
+        do {
+            let root = try await svc.start()
+            try fm.createDirectory(at: base, withIntermediateDirectories: true)
+            if let previous = (try? fm.contentsOfDirectory(atPath: base.path))?.filter({ !$0.hasPrefix(".") }).sorted().last {
+                try fm.copyItem(at: base.appendingPathComponent(previous), to: dest)
+            } else {
+                try fm.createDirectory(at: dest, withIntermediateDirectories: true)
+            }
+            let disk = LocalService(root: dest.path)
+            let server = try await walk(svc, root, hidden: true, strict: true, exclude: saved.excludeList).files
+            var local = try await walk(disk, dest.path, hidden: true, strict: true).files
+            // Mirror the server: drop what it no longer has (deepest first), then fetch what's new or changed.
+            for rel in local.keys.sorted(by: >) where server[rel]?.isDir != local[rel]?.isDir {
+                try? fm.removeItem(atPath: joinPath(dest.path, rel)); local[rel] = nil
+            }
+            let p = SyncPlan(mode: .download, a: Endpoint(service: disk, root: dest.path),
+                             b: Endpoint(service: svc, root: root, location: saved.proto == .local ? nil : saved.id, bookmark: saved),
+                             ops: makePlan(local: local, remote: server, mode: .download))
+            await run(p, title: "Backup of \(saved.title)", kind: .download, undoable: false)
+            message = "Backed up \(saved.title) to \(dest.path)"
+        } catch {
+            try? fm.removeItem(at: dest)
+            message = "Backup of \(saved.title) failed: \(error.localizedDescription)"
+        }
     }
 
     // MARK: Auto-upload
 
-    /// Turns auto-upload for the connected bookmark on or off; switching it on pairs the folders shown now.
-    func setAutoSync(_ on: Bool) {
-        guard let i = bookmarks.firstIndex(where: { $0.id == remote.bookmark?.id }) else { return }
-        if on { bookmarks[i].syncLocal = local.path; bookmarks[i].syncRemote = remote.path }
+    /// The folder pair a local ⇄ server sync used, remembered on the server's bookmark for auto-upload.
+    private func rememberPair(_ a: Endpoint, _ b: Endpoint) {
+        let (local, server) = a.service is LocalService ? (a, b) : (b, a)
+        guard local.service is LocalService, !(server.service is LocalService),
+              let i = bookmarks.firstIndex(where: { $0.id == server.bookmark?.id }),
+              bookmarks[i].syncLocal != local.root || bookmarks[i].syncRemote != server.root else { return }
+        bookmarks[i].syncLocal = local.root; bookmarks[i].syncRemote = server.root
+    }
+    /// The bookmark auto-upload can pair for these two panes: exactly one shows this Mac, the other a saved server.
+    func pairable(_ l: Pane, _ r: Pane) -> Bookmark? {
+        guard l.service != nil, r.service != nil, l.isLocal != r.isLocal else { return nil }
+        let server = l.isLocal ? r : l
+        return bookmarks.first { $0.id == server.bookmark?.id }
+    }
+    func autoSyncOn(_ l: Pane, _ r: Pane) -> Bool {
+        guard let b = pairable(l, r) else { return false }
+        let local = l.isLocal ? l : r, server = l.isLocal ? r : l
+        return b.autoSync == true && b.syncLocal == local.path && b.syncRemote == server.path
+    }
+    func setAutoSync(_ on: Bool, _ l: Pane, _ r: Pane) {
+        guard let b = pairable(l, r), let i = bookmarks.firstIndex(where: { $0.id == b.id }) else { return }
+        if on { bookmarks[i].syncLocal = (l.isLocal ? l : r).path; bookmarks[i].syncRemote = (l.isLocal ? r : l).path }
         bookmarks[i].autoSync = on
     }
 
-    /// Watches the paired local folder while its server is connected and auto-upload is on.
-    func updateWatcher() {
-        let b = current
-        let want = b?.autoSync == true && remote.service != nil && b?.syncRemote != nil ? b?.syncLocal : nil
-        guard want != watchedPath else { return }
-        watchedPath = want
-        watcher = want.flatMap { FolderWatcher($0) { [weak self] in MainActor.assumeIsolated { self?.autoUpload() } } }
+    /// One watcher per bookmark with auto-upload on; they run while the app is open, connected or not.
+    func updateWatchers() {
+        var want: [UUID: String] = [:]
+        for b in bookmarks where b.autoSync == true && b.syncRemote != nil { want[b.id] = b.syncLocal }
+        for (id, w) in watchers where want[id] != w.path { watchers[id] = nil }
+        for (id, path) in want where watchers[id] == nil {
+            if let w = FolderWatcher(path, onChange: { [weak self] in MainActor.assumeIsolated { self?.autoUpload(id) } }) { watchers[id] = (path, w) }
+        }
     }
-
-    private func autoUpload() {
-        guard let b = current, let lp = b.syncLocal, let rp = b.syncRemote else { return }
-        if autoBusy { autoAgain = true; return }  // changes during a run get their own run afterwards
-        autoBusy = true
+    private func autoUpload(_ id: UUID) {
+        guard let b = bookmarks.first(where: { $0.id == id }), let lp = b.syncLocal, let rp = b.syncRemote, let svc = service(for: id) else { return }
+        if autoBusy.contains(id) { autoAgain.insert(id); return }  // changes during a run get their own run afterwards
+        autoBusy.insert(id)
         Task {
-            repeat { autoAgain = false; await sync(.upload, dryRun: false, localRoot: lp, remoteRoot: rp, auto: true) } while autoAgain
-            autoBusy = false
+            repeat {
+                autoAgain.remove(id)
+                await sync(.upload, Endpoint(service: LocalService(root: lp), root: lp), Endpoint(service: svc, root: rp, location: id, bookmark: b), dryRun: false, auto: true)
+            } while autoAgain.contains(id)
+            autoBusy.remove(id)
         }
     }
 
     // MARK: Edit a server file in a local app
 
     /// Downloads to a private folder and opens it in its default app; every save is uploaded back (and can be undone).
-    func edit(_ f: RemoteFile) async {
-        guard let svc = remote.service, let b = remote.bookmark, !f.isDir else { return }
+    func edit(_ f: RemoteFile, in pane: Pane) async {
+        guard let svc = pane.service, !f.isDir else { return }
         let url = editDir.appendingPathComponent(UUID().uuidString).appendingPathComponent(f.name)
         do {
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             try await svc.download(f.path, to: url)
-            edits[url.path] = Edit(remote: f.path, bookmarkID: b.id, stamp: modified(url.path))
+            edits[url.path] = Edit(remote: f.path, location: pane.locationID, bookmark: pane.bookmark, pane: pane, stamp: modified(url.path))
             if editWatcher == nil { editWatcher = FolderWatcher(editDir.path, latency: 0.5) { [weak self] in MainActor.assumeIsolated { self?.editsChanged() } } }
             NSWorkspace.shared.open(url)
-            message = "Editing \(f.name) — every save is uploaded to the server."
+            message = "Editing \(f.name) — every save is uploaded to \(pane.title)."
         } catch { message = "Could not open \(f.name): \(error.localizedDescription)" }
     }
 
@@ -300,14 +473,93 @@ import AppKit
             guard let m = modified(path), m != e.stamp else { continue }
             edits[path]?.stamp = m
             let name = (path as NSString).lastPathComponent
-            guard remote.bookmark?.id == e.bookmarkID else { message = "\(name) was saved, but its server isn't connected — reconnect and save again."; continue }
+            // A saved bookmark works even after disconnecting; a quick connection needs its pane.
+            guard let svc = e.location.flatMap({ service(for: $0) }) ?? e.pane.service else {
+                message = "\(name) was saved, but its server isn't connected — reconnect and save again."; continue
+            }
             let size = Int64((try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int) ?? 0)
-            let p = SyncPlan(mode: .upload, localRoot: (path as NSString).deletingLastPathComponent, remoteRoot: parentPath(e.remote),
-                             ops: [SyncOp(to: .remote, rel: name, size: size, overwrite: true, reason: "Edited")])
+            let dir = (path as NSString).deletingLastPathComponent
+            let p = SyncPlan(mode: .upload, a: Endpoint(service: LocalService(root: dir), root: dir),
+                             b: Endpoint(service: svc, root: parentPath(e.remote), location: e.location, bookmark: e.bookmark),
+                             ops: [SyncOp(to: .b, rel: name, size: size, overwrite: true, reason: "Edited")])
             Task { await run(p, title: "Saved \(name)", kind: .upload, quiet: true) }
         }
     }
     private func modified(_ path: String) -> Date? { (try? FileManager.default.attributesOfItem(atPath: path))?[.modificationDate] as? Date }
+
+    // MARK: Bookmarks in iCloud Drive, daily backups
+
+    private func libraryChanged(before: Library) {
+        guard !loading else { return }
+        save(bookmarks, "bookmarks.json"); save(favorites, "favorites.json")
+        updateWatchers()
+        backUpLibrary(before)
+        if !applyingCloud { writeCloud() }  // changes that came from iCloud aren't echoed back
+    }
+
+    /// Keeps one file per day with the bookmarks as they were before that day's first change; the newest 30 stay.
+    private func backUpLibrary(_ lib: Library) {
+        let fm = FileManager.default, day = DateFormatter()
+        day.dateFormat = "yyyy-MM-dd"
+        let file = libraryBackups.appendingPathComponent("Bookmarks \(day.string(from: Date())).json")
+        guard !fm.fileExists(atPath: file.path) else { return }
+        try? fm.createDirectory(at: libraryBackups, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(lib).write(to: file, options: .atomic)
+        let all = ((try? fm.contentsOfDirectory(atPath: libraryBackups.path)) ?? []).filter { $0.hasSuffix(".json") }.sorted()
+        for old in all.dropLast(30) { try? fm.removeItem(at: libraryBackups.appendingPathComponent(old)) }
+    }
+
+    func restoreLibrary() {
+        let p = NSOpenPanel()
+        p.directoryURL = libraryBackups; p.allowedContentTypes = [.json]; p.prompt = "Restore"
+        p.message = "Pick a bookmarks backup. Your current bookmarks are replaced (and saved in today's backup if there isn't one yet)."
+        guard p.runModal() == .OK, let u = p.url else { return }
+        guard let lib = try? JSONDecoder().decode(Library.self, from: Data(contentsOf: u)) else { message = "That file isn't a Technoduck bookmarks backup."; return }
+        bookmarks = lib.bookmarks; favorites = lib.favorites
+        message = "Restored \(lib.bookmarks.count) bookmarks and \(lib.favorites.count) favorites."
+    }
+
+    /// Bookmarks and favorites sync through a file in iCloud Drive; passwords stay in this Mac's Keychain.
+    func setICloud(_ on: Bool) {
+        if on, !FileManager.default.fileExists(atPath: cloudDir.deletingLastPathComponent().path) {
+            message = "iCloud Drive is off on this Mac. Turn it on in System Settings › your Apple Account › iCloud."; return
+        }
+        iCloud = on
+        UserDefaults.standard.set(on, forKey: "iCloudSync")
+        if on {
+            // Merge with what other Macs already put there, then share the result.
+            if let lib = try? JSONDecoder().decode(Library.self, from: Data(contentsOf: cloudFile)) {
+                applyingCloud = true
+                bookmarks += lib.bookmarks.filter { c in !bookmarks.contains { $0.id == c.id } }
+                favorites += lib.favorites.filter { c in !favorites.contains { $0.id == c.id } }
+                applyingCloud = false
+            }
+            writeCloud()
+            message = "Bookmarks now sync through iCloud Drive. Passwords stay in each Mac's Keychain."
+        }
+        watchCloud()
+    }
+    private func watchCloud() {
+        cloudWatcher = nil
+        guard iCloud else { return }
+        try? FileManager.default.createDirectory(at: cloudDir, withIntermediateDirectories: true)
+        cloudWatcher = FolderWatcher(cloudDir.path) { [weak self] in MainActor.assumeIsolated { self?.readCloud() } }
+    }
+    private func writeCloud() {
+        guard iCloud else { return }
+        try? FileManager.default.createDirectory(at: cloudDir, withIntermediateDirectories: true)
+        try? JSONEncoder().encode(Library(bookmarks: bookmarks, favorites: favorites)).write(to: cloudFile, options: .atomic)
+        cloudStamp = modified(cloudFile.path)
+    }
+    /// Takes the iCloud copy when another Mac changed it (last change wins).
+    private func readCloud() {
+        guard iCloud, let m = modified(cloudFile.path), m != cloudStamp,
+              let lib = try? JSONDecoder().decode(Library.self, from: Data(contentsOf: cloudFile)) else { return }
+        cloudStamp = m
+        applyingCloud = true
+        bookmarks = lib.bookmarks; favorites = lib.favorites
+        applyingCloud = false
+    }
 
     // MARK: Single-pane actions
 
@@ -315,7 +567,7 @@ import AppKit
         guard let service = pane.service else { return }
         for f in items {
             do { try await service.delete(f) } catch { pane.error = "Could not delete \(f.name): \(error.localizedDescription)"; break }
-            if pane === remote, let b = pane.bookmark {
+            if let b = pane.bookmark {
                 addLog(LogEvent(bookmarkID: b.id, kind: .delete, title: "Deleted \(f.name)", detail: f.path, bytes: f.isDir ? 0 : f.size))
             }
         }
@@ -327,7 +579,7 @@ import AppKit
         let p = joinPath(pane.path, name)
         do {
             try await service.mkdir(p)
-            if pane === remote, let b = pane.bookmark { addLog(LogEvent(bookmarkID: b.id, kind: .mkdir, title: "Created folder \(name)", detail: p)) }
+            if let b = pane.bookmark { addLog(LogEvent(bookmarkID: b.id, kind: .mkdir, title: "Created folder \(name)", detail: p)) }
             await pane.refresh()
         } catch { pane.error = error.localizedDescription }
     }

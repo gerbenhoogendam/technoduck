@@ -48,79 +48,94 @@ func makePlan(local: [String: RemoteFile], remote: [String: RemoteFile], mode: S
     for rel in Set(local.keys).union(remote.keys).sorted() {
         let l = local[rel], r = remote[rel]
         switch mode {
-        case .upload: if let l { copy(rel, l, to: .remote, over: r) }
-        case .download: if let r { copy(rel, r, to: .local, over: l) }
+        case .upload: if let l { copy(rel, l, to: .b, over: r) }
+        case .download: if let r { copy(rel, r, to: .a, over: l) }
         case .both:
             guard let l, let r else {
-                if let l { copy(rel, l, to: .remote, over: nil) }
-                if let r { copy(rel, r, to: .local, over: nil) }
+                if let l { copy(rel, l, to: .b, over: nil) }
+                if let r { copy(rel, r, to: .a, over: nil) }
                 continue
             }
             guard !l.isDir, !r.isDir, l.size != r.size else { continue }
             let lm = l.modified ?? .distantPast, rm = r.modified ?? .distantPast
-            if lm > rm { ops.append(SyncOp(to: .remote, rel: rel, size: l.size, modified: l.modified, overwrite: true, reason: "Newer here")) }
-            if rm > lm { ops.append(SyncOp(to: .local, rel: rel, size: r.size, modified: r.modified, overwrite: true, reason: "Newer there")) }
+            if lm > rm { ops.append(SyncOp(to: .b, rel: rel, size: l.size, modified: l.modified, overwrite: true, reason: "Newer here")) }
+            if rm > lm { ops.append(SyncOp(to: .a, rel: rel, size: r.size, modified: r.modified, overwrite: true, reason: "Newer there")) }
         }
     }
     return ops
 }
 
-/// Applies and undoes single sync steps. Every file that gets replaced is saved under `backups` first.
+/// Applies and undoes single steps between any two locations. Every file that gets replaced is saved under `backups` first.
 struct SyncEngine {
-    let remote: FileService
-    let localRoot: String, remoteRoot: String
-    let backups: URL
+    let a: FileService, b: FileService
+    let aRoot: String, bRoot: String
+    /// nil skips backups (and with them undo), as for backup snapshots.
+    let backups: URL?
 
-    func path(_ side: Side, _ rel: String) -> String { joinPath(side == .local ? localRoot : remoteRoot, rel) }
+    func service(_ s: Side) -> FileService { s == .a ? a : b }
+    func path(_ s: Side, _ rel: String) -> String { joinPath(s == .a ? aRoot : bRoot, rel) }
 
     func apply(_ op: SyncOp) async throws -> Applied {
-        let fm = FileManager.default, dest = path(op.to, op.rel)
+        let fm = FileManager.default, from: Side = op.to == .a ? .b : .a
+        let dst = service(op.to), dest = path(op.to, op.rel)
         if op.isDir {
-            if op.to == .local { try fm.createDirectory(atPath: dest, withIntermediateDirectories: true) } else { try await remote.mkdir(dest) }
+            if dst is LocalService { try fm.createDirectory(atPath: dest, withIntermediateDirectories: true) } else { try await dst.mkdir(dest) }
             return Applied(op: op)
         }
-        let b = backups.appendingPathComponent(op.to.rawValue).appendingPathComponent(op.rel)
-        try fm.createDirectory(at: b.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let b = backups?.appendingPathComponent(op.to.rawValue).appendingPathComponent(op.rel)
+        if let b { try fm.createDirectory(at: b.deletingLastPathComponent(), withIntermediateDirectories: true) }
         var backup: String?
-        if op.to == .local {
+        if dst is LocalService {
             // Checked on disk, not from the plan: a case-insensitive Mac can map two server names to one file.
-            if fm.fileExists(atPath: dest) { try fm.moveItem(atPath: dest, toPath: b.path); backup = b.path }
-            do { try await remote.download(path(.remote, op.rel), to: URL(fileURLWithPath: dest)) } catch {
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: dest, isDirectory: &isDir) {
+                guard !isDir.boolValue else { throw ServiceError("A folder named \(op.rel) is in the way") }
+                if let b { try fm.moveItem(atPath: dest, toPath: b.path); backup = b.path } else { try fm.removeItem(atPath: dest) }
+            }
+            do { try await transfer(service(from), path(from, op.rel), dst, dest) } catch {
                 if let backup { try? fm.removeItem(atPath: dest); try? fm.moveItem(atPath: backup, toPath: dest) }
                 throw error
             }
             if let m = op.modified { try? fm.setAttributes([.modificationDate: m], ofItemAtPath: dest) }
         } else {
             // Some FTP servers leave dotfiles out of listings, so try to save one even when the plan thinks it's new.
-            if op.overwrite || (op.rel as NSString).lastPathComponent.hasPrefix(".") {
-                do { try await remote.download(dest, to: b); backup = b.path } catch {
+            if let b, op.overwrite || (op.rel as NSString).lastPathComponent.hasPrefix(".") {
+                do { try await dst.download(dest, to: b); backup = b.path } catch {
                     try? fm.removeItem(at: b)
                     if op.overwrite { throw error }
                 }
             }
-            try await remote.upload(URL(fileURLWithPath: path(.local, op.rel)), to: dest)
+            try await transfer(service(from), path(from, op.rel), dst, dest)
         }
         return Applied(op: op, backup: backup)
     }
 
+    /// Copies one file between any two locations; server to server goes through a temp file.
+    private func transfer(_ src: FileService, _ from: String, _ dst: FileService, _ to: String) async throws {
+        if src is LocalService { return try await dst.upload(URL(fileURLWithPath: from), to: to) }
+        if dst is LocalService { return try await src.download(from, to: URL(fileURLWithPath: to)) }
+        let tmp = FileManager.default.temporaryDirectory.appendingPathComponent("technoduck-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        try await src.download(from, to: tmp)
+        try await dst.upload(tmp, to: to)
+    }
+
     func undo(_ a: Applied) async throws {
-        let fm = FileManager.default, dest = path(a.op.to, a.op.rel)
+        let fm = FileManager.default, svc = service(a.op.to), dest = path(a.op.to, a.op.rel)
+        let file = RemoteFile(name: (dest as NSString).lastPathComponent, path: dest, isDir: a.op.isDir, size: 0)
         if a.op.isDir {
             // Only folders that are still empty go; anything added since stays.
-            if a.op.to == .local {
-                if (try? fm.contentsOfDirectory(atPath: dest))?.isEmpty == true { try fm.removeItem(atPath: dest) }
-            } else if (try? await remote.list(dest))?.isEmpty == true {
-                try await remote.delete(RemoteFile(name: (dest as NSString).lastPathComponent, path: dest, isDir: true, size: 0))
-            }
+            guard (try? await svc.list(dest))?.isEmpty == true else { return }
+            if svc is LocalService { try fm.removeItem(atPath: dest) } else { try await svc.delete(file) }
         } else if let backup = a.backup {
-            if a.op.to == .local {
+            if svc is LocalService {
                 try? fm.trashItem(at: URL(fileURLWithPath: dest), resultingItemURL: nil)
                 try fm.moveItem(atPath: backup, toPath: dest)
-            } else { try await remote.upload(URL(fileURLWithPath: backup), to: dest) }
-        } else if a.op.to == .local {
+            } else { try await svc.upload(URL(fileURLWithPath: backup), to: dest) }
+        } else if svc is LocalService {
             try fm.trashItem(at: URL(fileURLWithPath: dest), resultingItemURL: nil)
         } else {
-            try await remote.delete(RemoteFile(name: (dest as NSString).lastPathComponent, path: dest, isDir: false, size: 0))
+            try await svc.delete(file)
         }
     }
 }
