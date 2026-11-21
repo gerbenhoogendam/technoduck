@@ -12,6 +12,7 @@ for s in 16 32 128 256 512; do
   sips -z $((s*2)) $((s*2)) Resources/AppIcon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o Technoduck.app/Contents/Resources/AppIcon.icns
+cp Resources/ChicagoFLF.ttf Technoduck.app/Contents/Resources/  # for the Macintosh 512K theme
 cat > Technoduck.app/Contents/Info.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

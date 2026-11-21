@@ -14,7 +14,7 @@ A native macOS file-transfer client written in Swift and SwiftUI, with a local f
 - **Timeline per connection:** uploads, downloads, syncs, deletes and undos, grouped by day.
 - **Folder sizes:** every folder's total size is worked out in the background.
 - **Hidden files:** View › Show Hidden Files (⇧⌘.).
-- **Themes:** View › Theme › Nova Midnight, Nova Daylight or Neon Pond, after Panic's Nova editor, or Macintosh 512K in black and white.
+- **Themes:** View › Theme › Nova Midnight, Nova Daylight or Neon Pond, after Panic's Nova editor, or Macintosh 512K in greyscale and Chicago.
 - **Excludes:** per bookmark, e.g. `node_modules, .git, *.log`.
 - **Folder pairs and auto-upload:** each bookmark remembers its local and server folders, and can upload changes as soon as you save.
 - **Favorites:** any folder, on your Mac or a server, can be pinned in the sidebar.
@@ -38,4 +38,4 @@ Requires macOS 14 or later and Swift 5.9 or later.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). The ChicagoFLF font by Robin Casady is in the public domain; see [Resources/README.ChicagoFLF](Resources/README.ChicagoFLF).

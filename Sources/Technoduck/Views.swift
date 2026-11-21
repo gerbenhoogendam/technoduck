@@ -23,8 +23,8 @@ struct SyncPlanSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Dry Run — \(plan.mode.title)").font(.title3.bold())
-                Text("A  \(plan.a.root)\nB  \(plan.b.root)").font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+                Text("Dry Run — \(plan.mode.title)").themedFont(.title3.bold())
+                Text("A  \(plan.a.root)\nB  \(plan.b.root)").themedFont(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
                 HStack(spacing: 28) {
                     stat("arrow.right.circle.fill", .orange, "A → B", plan.files(to: .b).count, plan.bytes(to: .b))
                     stat("arrow.left.circle.fill", .blue, "B → A", plan.files(to: .a).count, plan.bytes(to: .a))
@@ -32,7 +32,7 @@ struct SyncPlanSheet: View {
                     if dirs > 0 {
                         HStack(spacing: 8) {
                             Image(systemName: "folder.badge.plus").font(.title2).foregroundStyle(.green)
-                            VStack(alignment: .leading) { Text("New folders").font(.caption).foregroundStyle(.secondary); Text("\(dirs)").font(.headline) }
+                            VStack(alignment: .leading) { Text("New folders").themedFont(.caption).foregroundStyle(.secondary); Text("\(dirs)").themedFont(.headline) }
                         }
                     }
                 }
@@ -56,7 +56,7 @@ struct SyncPlanSheet: View {
             }
             Divider()
             HStack {
-                Text(plan.summary).font(.callout).foregroundStyle(.secondary)
+                Text(plan.summary).themedFont(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button("Close", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                 Button("Sync Now") {
@@ -74,8 +74,8 @@ struct SyncPlanSheet: View {
         HStack(spacing: 8) {
             Image(systemName: symbol).font(.title2).foregroundStyle(color)
             VStack(alignment: .leading) {
-                Text(title).font(.caption).foregroundStyle(.secondary)
-                Text("\(n) files · \(fmtBytes(bytes))").font(.headline).monospacedDigit()
+                Text(title).themedFont(.caption).foregroundStyle(.secondary)
+                Text("\(n) files · \(fmtBytes(bytes))").themedFont(.headline).monospacedDigit()
             }
         }
     }
@@ -91,7 +91,7 @@ struct StatusBar: View {
             if store.showHidden { Label("Hidden files shown", systemImage: "eye").labelStyle(.titleAndIcon) }
             if let c = store.active?.bookmark { Image(systemName: "lock.fill").opacity(c.proto == .ftp || c.proto == .webdav ? 0 : 1); Text(c.proto.rawValue) }
         }
-        .font(.callout).foregroundStyle(.secondary)
+        .themedFont(.callout).foregroundStyle(.secondary)
         .padding(.horizontal, 12).padding(.vertical, 6)
         .themeBackground(store.theme.bar, .bar)
         .overlay(alignment: .top) { Divider() }
@@ -139,10 +139,10 @@ struct TransferRow: View {
                 Text(t.name).lineLimit(1)
                 switch t.state {
                 case .running: ProgressView(value: t.progress)
-                case .done: Text("Complete · \(t.started.formatted(date: .omitted, time: .shortened))").font(.caption).foregroundStyle(.green)
-                case .failed(let m): Text(m).font(.caption).foregroundStyle(.red).lineLimit(3)
+                case .done: Text("Complete · \(t.started.formatted(date: .omitted, time: .shortened))").themedFont(.caption).foregroundStyle(.green)
+                case .failed(let m): Text(m).themedFont(.caption).foregroundStyle(.red).lineLimit(3)
                 }
-                Text(t.detail).font(.caption2).foregroundStyle(.tertiary).lineLimit(2)
+                Text(t.detail).themedFont(.caption2).foregroundStyle(.tertiary).lineLimit(2)
                 if t.state != .running, let r = t.recordID, store.canUndo(r) {
                     Button("Undo", systemImage: "arrow.uturn.backward") { Task { await store.rollback(r) } }.controlSize(.small)
                 }
@@ -176,7 +176,7 @@ struct TimelineView: View {
                             Section {
                                 ForEach(day.value) { e in TimelineRow(e: e) }
                             } header: {
-                                Text(dayTitle(day.key)).font(.caption.bold()).foregroundStyle(.secondary)
+                                Text(dayTitle(day.key)).themedFont(.caption.bold()).foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 12).padding(.vertical, 6).background(.bar)
                             }
@@ -206,27 +206,27 @@ struct TimelineRow: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(e.title).font(.callout.weight(.medium)).lineLimit(2)
+                    Text(e.title).themedFont(.callout.weight(.medium)).lineLimit(2)
                     Spacer()
-                    Text(e.date.formatted(date: .omitted, time: .shortened)).font(.caption).foregroundStyle(.tertiary)
+                    Text(e.date.formatted(date: .omitted, time: .shortened)).themedFont(.caption).foregroundStyle(.tertiary)
                 }
-                if !e.detail.isEmpty { Text(e.detail).font(.caption).foregroundStyle(.secondary).lineLimit(3).truncationMode(.middle) }
-                if e.bytes > 0 { Text(fmtBytes(e.bytes)).font(.caption).foregroundStyle(.secondary).monospacedDigit() }
+                if !e.detail.isEmpty { Text(e.detail).themedFont(.caption).foregroundStyle(.secondary).lineLimit(3).truncationMode(.middle) }
+                if e.bytes > 0 { Text(fmtBytes(e.bytes)).themedFont(.caption).foregroundStyle(.secondary).monospacedDigit() }
                 if !e.items.isEmpty {
                     DisclosureGroup("\(e.items.count) item\(e.items.count == 1 ? "" : "s")", isExpanded: $expanded) {
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(Array(e.items.prefix(300).enumerated()), id: \.offset) { Text($0.element).lineLimit(1).truncationMode(.middle) }
                             if e.items.count > 300 { Text("… and \(e.items.count - 300) more") }
                         }
-                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                        .themedFont(.caption.monospaced()).foregroundStyle(.secondary)
                     }
-                    .font(.caption)
+                    .themedFont(.caption)
                 }
                 if let r = e.recordID {
                     if store.canUndo(r) {
                         Button("Undo", systemImage: "arrow.uturn.backward") { Task { await store.rollback(r) } }.controlSize(.small).padding(.top, 2)
                     } else if store.records.contains(where: { $0.id == r }) {
-                        Label("Undone", systemImage: "checkmark").font(.caption).foregroundStyle(.secondary)
+                        Label("Undone", systemImage: "checkmark").themedFont(.caption).foregroundStyle(.secondary)
                     }
                 }
             }

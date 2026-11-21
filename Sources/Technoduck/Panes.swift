@@ -9,7 +9,7 @@ struct RootView: View {
     var body: some View {
         @Bindable var store = store
         NavigationSplitView {
-            Sidebar(editing: $editing).font(store.theme.font)
+            Sidebar(editing: $editing).themed(store.theme)
                 .navigationSplitViewColumnWidth(min: 190, ideal: 230)
         } detail: {
             // Dividers between panes can be dragged; a pane's grip (≡) drags the pane itself to another spot.
@@ -26,10 +26,10 @@ struct RootView: View {
             }
             .id(store.panes.map(\.id))
             .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar() }
-            .font(store.theme.font)
+            .themed(store.theme)
         }
         .inspector(isPresented: $store.showInspector) {
-            InspectorView().font(store.theme.font).inspectorColumnWidth(min: 280, ideal: 330)
+            InspectorView().themed(store.theme).inspectorColumnWidth(min: 280, ideal: 330)
         }
         .toolbar {
             ToolbarItem(placement: .navigation) {
@@ -54,8 +54,8 @@ struct RootView: View {
             // SwiftUI's .grayscale on the split view breaks the toolbar's safe area, so the window frame gets a Core Image filter.
             for w in NSApp.windows where w.sheetParent == nil { w.contentView?.superview?.setGreyscale(store.theme.grayscale > 0) }
         }
-        .sheet(item: $editing) { b in ConnectionSheet(bookmark: b).themed(store.theme) }
-        .sheet(item: $store.plan) { p in SyncPlanSheet(plan: p).themed(store.theme) }
+        .sheet(item: $editing) { b in ConnectionSheet(bookmark: b).themed(store.theme).grayscale(store.theme.grayscale) }
+        .sheet(item: $store.plan) { p in SyncPlanSheet(plan: p).themed(store.theme).grayscale(store.theme.grayscale) }
         .navigationTitle("Technoduck")
         .navigationSubtitle(store.active?.title ?? "")
     }
@@ -70,7 +70,7 @@ struct Sidebar: View {
         List {
             Section("Favorites") {
                 if store.favorites.isEmpty {
-                    Text("Right-click a folder › Add to Favorites").font(.caption).foregroundStyle(.tertiary)
+                    Text("Right-click a folder › Add to Favorites").themedFont(.caption).foregroundStyle(.tertiary)
                 }
                 ForEach(store.favorites) { f in FavoriteRow(f: f) }
                     .onMove { store.favorites.move(fromOffsets: $0, toOffset: $1) }
@@ -78,7 +78,7 @@ struct Sidebar: View {
             Section("Bookmarks") {
                 ForEach(store.bookmarks) { b in
                     Button { Task { await store.connect(b) } } label: {
-                        Label { Text(b.title).lineLimit(1) } icon: { Image(systemName: b.proto.symbol) }
+                        Label { Text(b.title).lineLimit(1).themedFont(nil) } icon: { Image(systemName: b.proto.symbol) }
                     }
                     .buttonStyle(.plain)
                     .fontWeight(store.panes.contains { $0.bookmark?.id == b.id } ? .semibold : .regular)
@@ -106,9 +106,9 @@ struct FavoriteRow: View {
                     .foregroundStyle(f.bookmarkID == nil ? Color.secondary : store.theme.accent)
                     .frame(width: 18)
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(place).fontWeight(.semibold).lineLimit(1)
+                    Text(place).fontWeight(.semibold).lineLimit(1).themedFont(nil)
                     // Head truncation keeps the last folders visible, with "…" standing in for the rest.
-                    Text(f.path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                    Text(f.path).themedFont(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
                 }
             }
             .contentShape(Rectangle())
@@ -217,7 +217,7 @@ struct PaneView: View {
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         }
         .buttonStyle(.borderless)
-        .font(store.theme.font ?? .callout)
+        .themedFont(.callout)
         .padding(.horizontal, 10).frame(height: 34)
         .themeBackground(store.theme.bar, .bar)
         .overlay(alignment: .top) {
@@ -244,7 +244,7 @@ struct PaneView: View {
                 .width(min: 56, ideal: 80)
             TableColumn("Modified") { f in Text(f.modified.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "--").foregroundStyle(.secondary) }
                 .width(min: 80, ideal: 140)
-            TableColumn("Permissions") { f in Text(f.permissions).font(.system(.body, design: .monospaced)).foregroundStyle(.secondary) }
+            TableColumn("Permissions") { f in Text(f.permissions).themedFont(.system(.body, design: .monospaced)).foregroundStyle(.secondary) }
                 .width(min: 50, ideal: 90)
         } rows: {
             ForEach(rows) { f in TableRow(f).itemProvider { dragItem(f) } }
@@ -383,9 +383,9 @@ struct LocationCard: View {
             Image(systemName: symbol).font(.title2).foregroundStyle(store.theme.onAccent)
                 .frame(width: 42, height: 42).background(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 10))
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.headline).lineLimit(1)
-                Text(subtitle).font(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                Text(kind).font(.caption).foregroundStyle(.tertiary)
+                Text(title).themedFont(.headline).lineLimit(1)
+                Text(subtitle).themedFont(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                Text(kind).themedFont(.caption).foregroundStyle(.tertiary)
             }
             Spacer(minLength: 0)
         }
@@ -439,12 +439,12 @@ struct CenterStrip: View {
 
     private var options: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Sync Folders").font(.headline)
+            Text("Sync Folders").themedFont(.headline)
             Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
                 GridRow { Text("A").bold(); Text("\(left.title): \(left.path)").lineLimit(1).truncationMode(.middle) }
                 GridRow { Text("B").bold(); Text("\(right.title): \(right.path)").lineLimit(1).truncationMode(.middle) }
             }
-            .font(.caption).foregroundStyle(.secondary)
+            .themedFont(.caption).foregroundStyle(.secondary)
             Picker("Direction", selection: $mode) {
                 ForEach(SyncMode.allCases) { m in Label(m.title, systemImage: m.symbol).tag(m) }
             }
@@ -455,10 +455,10 @@ struct CenterStrip: View {
             }
             let ex = [left.bookmark, right.bookmark].compactMap { b in store.bookmarks.first { $0.id == b?.id }?.excludes }.filter { !$0.isEmpty }
             if !ex.isEmpty {
-                Label("Skipping: \(ex.joined(separator: ", "))", systemImage: "line.3.horizontal.decrease.circle").font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                Label("Skipping: \(ex.joined(separator: ", "))", systemImage: "line.3.horizontal.decrease.circle").themedFont(.caption).foregroundStyle(.secondary).lineLimit(2)
             }
             Text("Nothing is ever deleted. Files that get replaced are backed up first, so every sync can be undone. Hidden files are included only when View › Show Hidden Files is on.")
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                .themedFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             HStack {
                 Button("Dry Run") { showSync = false; Task { await store.sync(mode, left, right, dryRun: true) } }
                     .help("Compare only and show what would be copied")

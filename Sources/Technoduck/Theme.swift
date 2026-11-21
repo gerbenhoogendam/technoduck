@@ -49,8 +49,8 @@ enum Theme: String, CaseIterable, Identifiable {
     }
     /// Text and symbols drawn on the accent colour.
     var onAccent: Color { self == .pond ? Color(hex: 0x06211C) : .white }
-    /// 1984: everything in Geneva 12 (Susan Kare's 1984 font; Chicago no longer ships with macOS), in shades of grey.
-    var font: Font? { self == .mac512 ? .custom("Geneva", size: 12) : nil }
+    /// 1984: everything in Chicago 12, in shades of grey.
+    var font: Font? { self == .mac512 ? chicago : nil }
     var grayscale: Double { self == .mac512 ? 1 : 0 }
     var gradient: LinearGradient { LinearGradient(colors: [accent, accent2], startPoint: .leading, endPoint: .trailing) }
 
@@ -59,6 +59,25 @@ enum Theme: String, CaseIterable, Identifiable {
     var bar: Color? { [.midnight: Color(hex: 0x1F2335), .daylight: Color(hex: 0xF1EEF6), .pond: Color(hex: 0x0F1F21), .mac512: .white][self] }
     var sidebar: Color? { [.midnight: Color(hex: 0x11131D), .daylight: Color(hex: 0xEAE5F3), .pond: Color(hex: 0x071012), .mac512: .white][self] }
     var strip: Color? { [.midnight: Color(hex: 0x1A1D2C), .daylight: Color(hex: 0xF5F2F8), .pond: Color(hex: 0x0C191B), .mac512: .white][self] }
+}
+
+/// ChicagoFLF, a public-domain revival of the 1984 Mac system font (Resources/README.ChicagoFLF).
+/// The .app carries a copy; a plain `swift build` reads it from the source tree.
+private let chicago: Font = {
+    let url = Bundle.main.url(forResource: "ChicagoFLF", withExtension: "ttf")
+        ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources/ChicagoFLF.ttf").standardized
+    CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    return .custom("ChicagoFLF", size: 12)
+}()
+
+extension EnvironmentValues { @Entry var classic = false }
+
+private struct ThemedFont: ViewModifier {
+    @Environment(\.classic) private var classic
+    let font: Font?
+    @ViewBuilder func body(content: Content) -> some View {
+        if classic { content.font(chicago) } else if let font { content.font(font) } else { content }
+    }
 }
 
 extension NSView {
@@ -77,8 +96,10 @@ extension Color {
 }
 
 extension View {
-    /// The theme's font and greyscale, for sheets (the main window is greyed by `NSView.setGreyscale`).
-    func themed(_ theme: Theme) -> some View { font(theme.font).grayscale(theme.grayscale) }
+    /// The theme's font, for each column and sheet.
+    func themed(_ theme: Theme) -> some View { font(theme.font).environment(\.classic, theme == .mac512) }
+    /// `font`, except that the Macintosh 512K theme (like 1984) has one font in one size: Chicago 12. nil keeps the inherited font.
+    func themedFont(_ font: Font?) -> some View { modifier(ThemedFont(font: font)) }
 
     /// A themed background, or the system one when the theme has none.
     @ViewBuilder func themeBackground(_ color: Color?, _ fallback: some ShapeStyle) -> some View {
