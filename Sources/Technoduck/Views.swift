@@ -23,13 +23,23 @@ struct SyncPlanSheet: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
-                Text("Dry Run — \(plan.mode.title)").themedFont(.title3.bold())
+                if store.theme.label {
+                    Eyebrow("Nothing has moved yet")
+                    Text("DRY RUN: ").font(bebas(44)) + Text(plan.mode.title.components(separatedBy: "  ·  ")[0].uppercased()).font(bebas(44)).foregroundColor(store.theme.accent)
+                } else {
+                    Text("Dry Run — \(plan.mode.title)").themedFont(.title3.bold())
+                }
                 Text("A  \(plan.a.root)\nB  \(plan.b.root)").themedFont(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
                 HStack(spacing: 28) {
-                    stat("arrow.right.circle.fill", .orange, "A → B", plan.files(to: .b).count, plan.bytes(to: .b))
-                    stat("arrow.left.circle.fill", .blue, "B → A", plan.files(to: .a).count, plan.bytes(to: .a))
+                    stat("arrow.right.circle.fill", store.theme.label ? store.theme.accent : .orange, "A → B", plan.files(to: .b).count, plan.bytes(to: .b))
+                    stat("arrow.left.circle.fill", store.theme.label ? store.theme.accent : .blue, "B → A", plan.files(to: .a).count, plan.bytes(to: .a))
                     let dirs = plan.ops.filter(\.isDir).count
-                    if dirs > 0 {
+                    if dirs > 0, store.theme.label {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(dirs)").font(bebas(30)).foregroundStyle(store.theme.accent)
+                            Text("NEW FOLDERS").font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(.secondary)
+                        }
+                    } else if dirs > 0 {
                         HStack(spacing: 8) {
                             Image(systemName: "folder.badge.plus").font(.title2).foregroundStyle(.green)
                             VStack(alignment: .leading) { Text("New folders").themedFont(.caption).foregroundStyle(.secondary); Text("\(dirs)").themedFont(.headline) }
@@ -46,37 +56,48 @@ struct SyncPlanSheet: View {
                 Table(plan.ops) {
                     TableColumn("") { op in
                         Image(systemName: op.isDir ? "folder.badge.plus" : op.to == .b ? "arrow.right" : "arrow.left")
-                            .foregroundStyle(op.isDir ? Color.green : op.to == .b ? Color.orange : Color.blue)
+                            .foregroundStyle(store.theme.label ? store.theme.accent : op.isDir ? Color.green : op.to == .b ? Color.orange : Color.blue)
                     }
                     .width(22)
                     TableColumn("Path") { op in Text(op.rel).lineLimit(1).truncationMode(.middle) }
                     TableColumn("Why") { op in Text(op.reason).foregroundStyle(.secondary) }.width(100)
                     TableColumn("Size") { op in Text(op.isDir ? "" : fmtBytes(op.size)).monospacedDigit().foregroundStyle(.secondary) }.width(80)
                 }
+                .alternatingRowBackgrounds(store.theme.label ? .disabled : .automatic)
             }
             Divider()
             HStack {
                 Text(plan.summary).themedFont(.callout).foregroundStyle(.secondary)
                 Spacer()
                 Button("Close", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                    .labelButtons(store.theme.label, accent: store.theme.accent)
                 Button("Sync Now") {
                     let p = plan; dismiss()
                     Task { await store.run(p, title: "Sync " + p.mode.title.components(separatedBy: "  ·  ")[0]) }
                 }
                 .keyboardShortcut(.defaultAction).disabled(plan.ops.isEmpty)
+                .labelButtons(store.theme.label, accent: store.theme.accent, prominent: true)
             }
             .padding()
         }
-        .frame(width: 680, height: 480)
+        .frame(width: 680, height: store.theme.label ? 520 : 480)
+        .background(store.theme.label ? store.theme.bar ?? .clear : .clear)
     }
 
-    private func stat(_ symbol: String, _ color: Color, _ title: String, _ n: Int, _ bytes: Int64) -> some View {
+    @ViewBuilder private func stat(_ symbol: String, _ color: Color, _ title: String, _ n: Int, _ bytes: Int64) -> some View {
+        if store.theme.label {   // big condensed numbers in the accent, a spaced caption below
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(n) FILES · \(fmtBytes(bytes).uppercased())").font(bebas(30)).foregroundStyle(n > 0 ? color : .secondary)
+                Text(title).font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(.secondary)
+            }
+        } else {
         HStack(spacing: 8) {
             Image(systemName: symbol).font(.title2).foregroundStyle(color)
             VStack(alignment: .leading) {
                 Text(title).themedFont(.caption).foregroundStyle(.secondary)
                 Text("\(n) files · \(fmtBytes(bytes))").themedFont(.headline).monospacedDigit()
             }
+        }
         }
     }
 }
@@ -90,6 +111,10 @@ struct StatusBar: View {
             Spacer()
             if store.showHidden { Label("Hidden files shown", systemImage: "eye").labelStyle(.titleAndIcon) }
             if let c = store.active?.bookmark { Image(systemName: "lock.fill").opacity(c.proto == .ftp || c.proto == .webdav ? 0 : 1); Text(c.proto.rawValue) }
+            if store.theme.label {   // the status diamond
+                Rectangle().fill(store.theme.accent).frame(width: 7, height: 7).rotationEffect(.degrees(45))
+                    .shadow(color: store.theme.accent.opacity(0.7), radius: 5).padding(.leading, 4).accessibilityHidden(true)
+            }
         }
         .themedFont(.callout).foregroundStyle(.secondary)
         .padding(.horizontal, 12).padding(.vertical, 6)

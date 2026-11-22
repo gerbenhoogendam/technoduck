@@ -19,7 +19,7 @@ for s in 16 32 128 256 512; do
   sips -z $((s*2)) $((s*2)) Resources/AppIcon.png --out "$ICONSET/icon_${s}x${s}@2x.png" >/dev/null
 done
 iconutil -c icns "$ICONSET" -o Technoduck.app/Contents/Resources/AppIcon.icns
-cp Resources/ChicagoFLF.ttf Technoduck.app/Contents/Resources/  # for the Macintosh 512K theme
+cp Resources/ChicagoFLF.ttf Resources/BebasNeue-Regular.ttf Technoduck.app/Contents/Resources/  # Macintosh 512K and Label Lime
 cat > Technoduck.app/Contents/Info.plist <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -29,8 +29,8 @@ cat > Technoduck.app/Contents/Info.plist <<PLIST
 <key>CFBundleExecutable</key><string>Technoduck</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>1.1</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 <key>LSMinimumSystemVersion</key><string>14.0</string>
 <key>NSHighResolutionCapable</key><true/>

@@ -115,7 +115,7 @@ code { font: 500 .88em ui-monospace, Menlo, monospace; background: #ffffff12; pa
 .wide img { height: auto; width: 175vw; max-width: none; border-radius: 0; box-shadow: none; will-change: transform; }
 
 /* Themes */
-.themes { height: 460vh; }
+.themes { height: 560vh; }
 .themes .sticky { display: flex; flex-direction: column; justify-content: center; padding-top: 50px; }
 .tint { position: absolute; inset: 0; background: radial-gradient(70vw 60vh at 50% 70%, var(--glow, #ff4f9a33), transparent 70%); }
 .theme-name { font: 800 clamp(20px, 2.4vw, 30px) var(--display) !important; color: var(--ink) !important; letter-spacing: .12em; text-transform: uppercase; min-height: 1.4em; }

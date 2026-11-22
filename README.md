@@ -20,7 +20,7 @@ A native macOS file-transfer client written in Swift and SwiftUI, with a local f
 - **Timeline per connection:** uploads, downloads, syncs, deletes and undos, grouped by day.
 - **Folder sizes:** every folder's total size is worked out in the background.
 - **Hidden files:** View › Show Hidden Files (⇧⌘.).
-- **Themes:** View › Theme › Nova Midnight, Nova Daylight or Neon Pond, after Panic's Nova editor, or Macintosh 512K in greyscale and Chicago.
+- **Themes:** View › Theme › Nova Midnight, Nova Daylight or Neon Pond, after Panic's Nova editor, Macintosh 512K in greyscale and Chicago, or Label Lime: near-black, square corners and chartreuse, with paths and numbers in Bebas Neue.
 - **Settings (⌘,):** theme, hidden files, folder sizes on or off, whether Activity opens when a transfer starts, a sound when a sync finishes, how many syncs can be undone (and clearing those backups), and iCloud bookmarks.
 - **Excludes:** per bookmark, e.g. `node_modules, .git, *.log`.
 - **Folder pairs and auto-upload:** each bookmark remembers its local and server folders, and can upload changes as soon as you save.
@@ -28,6 +28,7 @@ A native macOS file-transfer client written in Swift and SwiftUI, with a local f
 - **Start folder:** right-click a server folder › Set as Start Folder.
 - **One-click backup:** back up a server into a folder you choose, as dated snapshots. Unchanged files are APFS clones of the previous snapshot, so only changes are downloaded.
 - **Bookmarks in iCloud Drive:** Bookmarks › Sync Bookmarks with iCloud Drive, with a daily backup you can restore. Passwords stay in each Mac's Keychain.
+- **Import from Cyberduck:** Bookmarks › Import from Cyberduck… brings in its SFTP, FTP, FTPS and WebDAV bookmarks. Importing twice adds nothing new; passwords are asked on first connect.
 - **Edit in your own app:** open a server file in its default app; every save is uploaded back to the server.
 
 Passwords are stored in the macOS Keychain. SFTP uses the system `sftp` (your SSH keys work), and FTP/FTPS use the system `curl`.
@@ -46,4 +47,4 @@ NOTARY_PROFILE=<profile> ./release.sh  # universal, signed and notarised: Techno
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The ChicagoFLF font by Robin Casady is in the public domain; see [Resources/README.ChicagoFLF](Resources/README.ChicagoFLF).
+MIT — see [LICENSE](LICENSE). The ChicagoFLF font by Robin Casady is in the public domain; see [Resources/README.ChicagoFLF](Resources/README.ChicagoFLF). Bebas Neue by Dharma Type is under the SIL Open Font License; see [Resources/OFL.BebasNeue.txt](Resources/OFL.BebasNeue.txt).

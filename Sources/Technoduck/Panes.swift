@@ -13,6 +13,8 @@ struct RootView: View {
                 .navigationSplitViewColumnWidth(min: 190, ideal: 230)
         } detail: {
             // Dividers between panes can be dragged; a pane's grip (≡) drags the pane itself to another spot.
+            // The status bar sits below the panes, not over them, so Label Lime's pane frame shows all four corners.
+            VStack(spacing: 0) {
             HSplitView {
                 ForEach(Array(store.panes.enumerated()), id: \.element.id) { i, p in
                     HStack(spacing: 0) {
@@ -25,7 +27,8 @@ struct RootView: View {
                 }
             }
             .id(store.panes.map(\.id))
-            .safeAreaInset(edge: .bottom, spacing: 0) { StatusBar() }
+            StatusBar()
+            }
             .themed(store.theme)
         }
         .inspector(isPresented: $store.showInspector) {
@@ -68,14 +71,14 @@ struct Sidebar: View {
     var body: some View {
         @Bindable var store = store
         List {
-            Section("Favorites") {
+            Section {
                 if store.favorites.isEmpty {
                     Text("Right-click a folder › Add to Favorites").themedFont(.caption).foregroundStyle(.tertiary)
                 }
                 ForEach(store.favorites) { f in FavoriteRow(f: f) }
                     .onMove { store.favorites.move(fromOffsets: $0, toOffset: $1) }
-            }
-            Section("Bookmarks") {
+            } header: { sectionTitle("Favorites") }
+            Section {
                 ForEach(store.bookmarks) { b in
                     Button { Task { await store.connect(b) } } label: {
                         Label { Text(b.title).lineLimit(1).themedFont(nil) } icon: { Image(systemName: b.proto.symbol) }
@@ -84,11 +87,15 @@ struct Sidebar: View {
                     .fontWeight(store.panes.contains { $0.bookmark?.id == b.id } ? .semibold : .regular)
                     .contextMenu { BookmarkMenu(b: b, editing: $editing) }
                 }
-            }
+            } header: { sectionTitle("Bookmarks") }
         }
         .listStyle(.sidebar)
         .scrollContentBackground(store.theme.sidebar == nil ? .automatic : .hidden)
         .background(store.theme.sidebar ?? .clear)
+    }
+
+    @ViewBuilder private func sectionTitle(_ t: String) -> some View {
+        if store.theme.label { Eyebrow(t).padding(.bottom, 2) } else { Text(t) }
     }
 }
 
@@ -145,7 +152,8 @@ struct PaneView: View {
             if pane.service == nil { EmptyPane(pane: pane, editing: $editing) } else { table }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay { if dropping { RoundedRectangle(cornerRadius: 4).strokeBorder(store.theme.accent, lineWidth: 3).allowsHitTesting(false) } }
+        .overlay { if store.theme.label && isActive && store.panes.count > 1 { ActiveFrame(color: store.theme.accent) } }
+        .overlay { if dropping { RoundedRectangle(cornerRadius: store.theme.corner(4)).strokeBorder(store.theme.accent, lineWidth: 3).allowsHitTesting(false) } }
         .onDrop(of: [.fileURL, .utf8PlainText], isTargeted: $dropping) { providers in
             let target = pane
             Task { let (urls, refs) = await loadDrop(providers); await store.drop(urls: urls, into: target); await store.drop(refs: refs, into: target) }
@@ -183,14 +191,18 @@ struct PaneView: View {
                     ForEach(ancestors, id: \.self) { p in Button(p) { Task { await pane.open(p) } } }
                     if pane.isLocal { Divider(); Button("Choose Folder…") { chooseFolder() } }
                 } label: {
-                    Text("\(pane.title) — \(pane.path == "/" ? "/" : (pane.path as NSString).lastPathComponent)").fontWeight(isActive ? .semibold : .regular)
+                    pathLabel
                 }
                 .menuStyle(.borderlessButton).fixedSize().help(pane.path)
                 Spacer(minLength: 6)
                 if let e = pane.error {
                     Text(e).foregroundStyle(.red).lineLimit(1).truncationMode(.middle).help(e)
                 } else {
-                    Text(summary).foregroundStyle(.secondary).lineLimit(1).monospacedDigit()
+                    if store.theme.label {
+                        Text(summary.uppercased()).font(bebas(17)).tracking(0.5).foregroundStyle(store.theme.accent).lineLimit(1)
+                    } else {
+                        Text(summary).foregroundStyle(.secondary).lineLimit(1).monospacedDigit()
+                    }
                 }
                 Button { store.toggleFavorite(pane, pane.path) } label: {
                     Image(systemName: store.favorite(pane, pane.path) == nil ? "star" : "star.fill")
@@ -218,15 +230,23 @@ struct PaneView: View {
         }
         .buttonStyle(.borderless)
         .themedFont(.callout)
-        .padding(.horizontal, 10).frame(height: 34)
+        .padding(.horizontal, store.theme.label ? 12 : 10).frame(height: store.theme.label ? 42 : 34)
         .themeBackground(store.theme.bar, .bar)
         .overlay(alignment: .top) {
-            if isActive {
+            if isActive && !store.theme.label {
                 if store.theme == .mac512 { // the pinstripes of an active 1984 title bar
                     VStack(spacing: 1) { ForEach(0..<3, id: \.self) { _ in Rectangle().frame(height: 1) } }
                 } else { Rectangle().fill(store.theme.gradient).frame(height: 2) }
             }
         }
+    }
+
+    /// "Server — folder"; in Label Lime small spaced capitals, then the folder in condensed capitals.
+    private var pathLabel: Text {
+        let last = pane.path == "/" ? "/" : (pane.path as NSString).lastPathComponent
+        guard store.theme.label else { return Text("\(pane.title) — \(last)").fontWeight(isActive ? .semibold : .regular) }
+        return Text(pane.title.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(1.6).foregroundColor(.secondary)
+            + Text("  ") + Text(last.uppercased()).font(bebas(23)).tracking(0.4).foregroundColor(isActive ? store.theme.accent : .primary)
     }
 
     private var saved: Bookmark? { store.bookmarks.first { $0.id == pane.bookmark?.id } }
@@ -364,8 +384,8 @@ struct EmptyPane: View {
                     VStack(spacing: 8) { Image(systemName: "plus").font(.title); Text("New Bookmark") }
                         .frame(maxWidth: .infinity, minHeight: 84)
                         .foregroundStyle(.secondary)
-                        .background(RoundedRectangle(cornerRadius: 12).strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6])).foregroundStyle(.quaternary))
-                        .contentShape(RoundedRectangle(cornerRadius: 12))  // the whole tile is the button, not just the + and label
+                        .background(RoundedRectangle(cornerRadius: store.theme.corner(12)).strokeBorder(style: StrokeStyle(lineWidth: store.theme.label ? 1 : 1.5, dash: [6])).foregroundStyle(.quaternary))
+                        .contentShape(Rectangle())  // the whole tile is the button, not just the + and label
                 }
                 .buttonStyle(.plain)
             }
@@ -379,21 +399,32 @@ struct LocationCard: View {
     @Environment(Store.self) private var store
     let symbol: String, title: String, subtitle: String, kind: String
     var body: some View {
+        let t = store.theme
         HStack(spacing: 12) {
-            Image(systemName: symbol).font(.title2).foregroundStyle(store.theme.onAccent)
-                .frame(width: 42, height: 42).background(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 10))
+            if t.label {   // an outlined tile with the symbol in the accent
+                Image(systemName: symbol).font(.title3).foregroundStyle(t.accent)
+                    .frame(width: 42, height: 42).background(Color(hex: 0x0B0B0C)).overlay(Rectangle().strokeBorder(Color(hex: 0x2A2A2A)))
+            } else {
+                Image(systemName: symbol).font(.title2).foregroundStyle(t.onAccent)
+                    .frame(width: 42, height: 42).background(LinearGradient(colors: [t.accent, t.accent2], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 10))
+            }
             VStack(alignment: .leading, spacing: 3) {
-                Text(title).themedFont(.headline).lineLimit(1)
+                Text(t.label ? title.uppercased() : title).themedFont(.headline).lineLimit(1)
                 Text(subtitle).themedFont(.callout).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
-                Text(kind).themedFont(.caption).foregroundStyle(.tertiary)
+                if t.label {
+                    Text(kind.uppercased()).font(.system(size: 9, weight: .bold)).tracking(1.4).foregroundStyle(Color(hex: 0xB5B5B5))
+                        .padding(.horizontal, 5).padding(.vertical, 1).overlay(Rectangle().strokeBorder(Color(hex: 0x3A3A3A)))
+                } else {
+                    Text(kind).themedFont(.caption).foregroundStyle(.tertiary)
+                }
             }
             Spacer(minLength: 0)
         }
         .padding(12)
         .frame(maxWidth: .infinity, minHeight: 84)
-        .background(.background.secondary, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(.separator))
-        .contentShape(RoundedRectangle(cornerRadius: 12))
+        .background(t.label ? AnyShapeStyle(Color(hex: 0x141415)) : AnyShapeStyle(.background.secondary), in: RoundedRectangle(cornerRadius: t.corner(12)))
+        .overlay(RoundedRectangle(cornerRadius: t.corner(12)).strokeBorder(t.label ? AnyShapeStyle(Color(hex: 0x2A2A2A)) : AnyShapeStyle(.separator)))
+        .contentShape(Rectangle())
     }
 }
 
@@ -418,6 +449,9 @@ struct CenterStrip: View {
                     .font(.title3.weight(.semibold)).foregroundStyle(ready ? store.theme.onAccent : .white)
                     .frame(width: 40, height: 40)
                     .background(Circle().fill(ready ? AnyShapeStyle(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing)) : AnyShapeStyle(Color.secondary.opacity(0.4))))
+                    .shadow(color: store.theme.label && ready ? store.theme.accent.opacity(0.55) : .clear, radius: 10)
+                    .background { if store.theme.label { RingText(text: "SYNC ✦ DRY RUN ✦ UNDO ✦ ", radius: 29, color: ready ? store.theme.accent : .secondary) } }
+                    .frame(width: 68, height: 68)
             }
             .buttonStyle(.plain)
             .disabled(!ready || store.planning)
@@ -426,8 +460,9 @@ struct CenterStrip: View {
             if store.planning { ProgressView().controlSize(.small) }
             Spacer()
         }
+        .labelButtons(store.theme.label, accent: store.theme.accent)
         .buttonStyle(.bordered)
-        .frame(width: 54)
+        .frame(width: store.theme.label ? 76 : 54)
         .themeBackground(store.theme.strip, .background.secondary)
     }
 

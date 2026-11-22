@@ -11,7 +11,7 @@ const ease = x => (x < .5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 const $ = (el, s) => el.querySelector(s), $$ = (el, s) => [...el.querySelectorAll(s)];
 
 const THEMES = [
-  ['Nova Midnight', '#ff4f9a40'], ['Nova Daylight', '#6c5ce740'], ['Neon Pond', '#2ef2c840'], ['Macintosh 512K', '#ffffff26'],
+  ['Nova Midnight', '#ff4f9a40'], ['Nova Daylight', '#6c5ce740'], ['Neon Pond', '#2ef2c840'], ['Macintosh 512K', '#ffffff26'], ['Label Lime', '#d4ff0040'],
 ];
 
 const scenes = {
@@ -49,11 +49,11 @@ const scenes = {
   },
   themes(p, el) {
     // .0–.2 the stack fans out · then each card takes the stage in turn
-    const fan = ease(seg(p, 0, .2)), focus = seg(p, .22, .98) * 3.999, active = Math.floor(focus);
+    const cards = $$(el, '.card'), fan = ease(seg(p, 0, .2)), focus = seg(p, .22, .98) * (cards.length - .001), active = Math.floor(focus);
     const wide = innerWidth > 820;
-    $$(el, '.card').forEach((c, i) => {
+    cards.forEach((c, i) => {
       const d = i - focus, near = Math.max(0, 1 - Math.abs(d)), spread = wide ? 30 : 46;
-      const x = lerp((i - 1.5) * 6, d * spread * .8, fan), y = lerp(i * -2, Math.abs(d) * 4, fan);
+      const x = lerp((i - (cards.length - 1) / 2) * 6, d * spread * .8, fan), y = lerp(i * -2, Math.abs(d) * 4, fan);
       c.style.transform = `translate(-50%, -50%) translate(${x}vw, ${y}vh) perspective(1400px) rotateY(${-d * 14 * fan}deg) scale(${lerp(.75, .62 + .38 * near, fan)})`;
       c.style.opacity = fan < 1 ? 1 : clamp(.35 + near);
       c.style.zIndex = Math.round(10 - Math.abs(d) * 2);
