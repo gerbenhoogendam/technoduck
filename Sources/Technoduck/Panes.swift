@@ -15,6 +15,19 @@ struct RootView: View {
             // Dividers between panes can be dragged; a pane's grip (≡) drags the pane itself to another spot.
             // The status bar sits below the panes, not over them, so Label Lime's pane frame shows all four corners.
             VStack(spacing: 0) {
+            if store.stacked && store.panes.count == 2 {
+                VSplitView {
+                    PaneView(pane: store.panes[0], editing: $editing).frame(maxWidth: .infinity, minHeight: 180, maxHeight: .infinity).clipped()
+                    VStack(spacing: 0) {
+                        Divider()
+                        CenterStrip(left: store.panes[0], right: store.panes[1], stacked: true)
+                        Divider()
+                        PaneView(pane: store.panes[1], editing: $editing).frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+                    }
+                    .frame(minHeight: 250, maxHeight: .infinity)
+                }
+                .id(store.panes.map(\.id))
+            } else {
             HSplitView {
                 ForEach(Array(store.panes.enumerated()), id: \.element.id) { i, p in
                     HStack(spacing: 0) {
@@ -27,6 +40,7 @@ struct RootView: View {
                 }
             }
             .id(store.panes.map(\.id))
+            }
             StatusBar()
             }
             .themed(store.theme)
@@ -45,6 +59,12 @@ struct RootView: View {
                     .onSubmit { if !quick.isEmpty { editing = bookmark(fromQuickConnect: quick); quick = "" } }
             }
             ToolbarItemGroup(placement: .primaryAction) {
+                if store.panes.count == 2 {
+                    Button { store.stacked.toggle() } label: {
+                        Label(store.stacked ? "Side by Side" : "Top and Bottom", systemImage: store.stacked ? "rectangle.split.2x1" : "rectangle.split.1x2")
+                    }
+                    .help(store.stacked ? "Put the two panes side by side (⌥⌘D)" : "Put the two panes above each other (⌥⌘D)")
+                }
                 Button { store.addPane() } label: { Label("Add Browser", systemImage: "rectangle.split.3x1") }
                     .help("Add a browser pane (up to 4)").disabled(store.panes.count >= 4)
                 Button { store.showInspector.toggle() } label: { Label("Activity", systemImage: "clock.arrow.circlepath") }
@@ -176,61 +196,73 @@ struct PaneView: View {
         .onChange(of: pane.selection) { if !pane.selection.isEmpty { store.activeID = pane.id } }
     }
 
+    /// Two rows: where you are and what's in it, then the buttons.
     private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
-                .frame(width: 14, height: 22).contentShape(Rectangle())
-                .draggable("technoduck-pane:\(pane.id.uuidString)")
-                .help("Drag onto another pane to swap places")
-            Image(systemName: pane.service == nil ? "circle.dashed" : pane.isLocal ? "laptopcomputer" : (pane.bookmark?.proto.symbol ?? "server.rack"))
-                .foregroundStyle(isActive ? store.theme.accent : Color.secondary)
-            if pane.service != nil {
-                Button { Task { await pane.back() } } label: { Image(systemName: "chevron.left") }.disabled(pane.history.isEmpty).help("Back")
-                Button { Task { await pane.open(parentPath(pane.path)) } } label: { Image(systemName: "chevron.up") }.disabled(pane.path == "/").help("Enclosing folder")
-                Menu {
-                    ForEach(ancestors, id: \.self) { p in Button(p) { Task { await pane.open(p) } } }
-                    if pane.isLocal { Divider(); Button("Choose Folder…") { chooseFolder() } }
-                } label: {
-                    pathLabel
-                }
-                .menuStyle(.borderlessButton).fixedSize().help(pane.path)
-                Spacer(minLength: 6)
-                if let e = pane.error {
-                    Text(e).foregroundStyle(.red).lineLimit(1).truncationMode(.middle).help(e)
-                } else {
-                    if store.theme.label {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal").foregroundStyle(.tertiary)
+                    .frame(width: 14, height: 22).contentShape(Rectangle())
+                    .draggable("technoduck-pane:\(pane.id.uuidString)")
+                    .help("Drag onto another pane to swap places")
+                Image(systemName: pane.service == nil ? "circle.dashed" : pane.isLocal ? "laptopcomputer" : (pane.bookmark?.proto.symbol ?? "server.rack"))
+                    .foregroundStyle(isActive ? store.theme.accent : Color.secondary)
+                if pane.service != nil {
+                    Menu {
+                        ForEach(ancestors, id: \.self) { p in Button(p) { Task { await pane.open(p) } } }
+                        if pane.isLocal { Divider(); Button("Choose Folder…") { chooseFolder() } }
+                    } label: {
+                        pathLabel
+                    }
+                    .menuStyle(.borderlessButton).fixedSize().help(pane.path)
+                    Spacer(minLength: 6)
+                    if let e = pane.error {
+                        Text(e).foregroundStyle(.red).lineLimit(1).truncationMode(.middle).help(e)
+                    } else if store.theme.label {
                         Text(summary.uppercased()).font(bebas(17)).tracking(0.5).foregroundStyle(store.theme.accent).lineLimit(1)
                     } else {
                         Text(summary).foregroundStyle(.secondary).lineLimit(1).monospacedDigit()
                     }
+                } else {
+                    Text("Choose a location").foregroundStyle(.secondary)
+                    Spacer()
                 }
-                Button { store.toggleFavorite(pane, pane.path) } label: {
-                    Image(systemName: store.favorite(pane, pane.path) == nil ? "star" : "star.fill")
-                }
-                .help("Favorite this folder").disabled(!store.canFavorite(pane))
-                Button { newFolder = true } label: { Image(systemName: "folder.badge.plus") }.help("New folder")
-                Button { confirmDelete = true } label: { Image(systemName: "trash") }.disabled(pane.selection.isEmpty).help(pane.isLocal ? "Move to Trash" : "Delete")
-                Button { Task { await pane.refresh() } } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
-            } else {
-                Text("Choose a location").foregroundStyle(.secondary)
-                Spacer()
-            }
-            Menu {
-                if pane.service != nil {
-                    if let b = saved {
-                        Button("Back Up \(b.title) Now", systemImage: "externaldrive.badge.timemachine") { Task { await store.backUp(b) } }
-                        Button("Set Current Folder as Start Folder", systemImage: "house") { store.setStartFolder(pane.path, for: pane) }
+                Menu {
+                    if pane.service != nil {
+                        if let b = saved {
+                            Button("Back Up \(b.title) Now", systemImage: "externaldrive.badge.timemachine") { Task { await store.backUp(b) } }
+                            Button("Set Current Folder as Start Folder", systemImage: "house") { store.setStartFolder(pane.path, for: pane) }
+                        }
+                        Button(pane.isLocal ? "Close Location" : "Disconnect", systemImage: "eject") { pane.close() }
                     }
-                    Button(pane.isLocal ? "Close Location" : "Disconnect", systemImage: "eject") { pane.close() }
+                    if store.panes.count > 1 { Button("Close Pane", systemImage: "xmark") { store.closePane(pane) } }
+                    if store.panes.count < 4 { Button("Add Browser Pane", systemImage: "plus") { store.addPane() } }
+                } label: { Image(systemName: "ellipsis.circle") }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            }
+            .frame(height: store.theme.label ? 38 : 30)
+            if pane.service != nil {
+                HStack(spacing: 10) {
+                    Button { Task { await pane.back() } } label: { Image(systemName: "chevron.left") }.disabled(pane.history.isEmpty).help("Back")
+                    Button { Task { await pane.open(parentPath(pane.path)) } } label: { Image(systemName: "chevron.up") }.disabled(pane.path == "/").help("Enclosing folder")
+                    Divider().frame(height: 14)
+                    Button { store.toggleFavorite(pane, pane.path) } label: {
+                        Image(systemName: store.favorite(pane, pane.path) == nil ? "star" : "star.fill")
+                    }
+                    .help("Favorite this folder").disabled(!store.canFavorite(pane))
+                    Button { newFolder = true } label: { Image(systemName: "folder.badge.plus") }.help("New folder")
+                    Button { confirmDelete = true } label: { Image(systemName: "trash") }.disabled(pane.selection.isEmpty).help(pane.isLocal ? "Move to Trash" : "Delete")
+                    Button { Task { await pane.refresh() } } label: { Image(systemName: "arrow.clockwise") }.help("Refresh")
+                    Spacer(minLength: 8)
+                    Text(pane.isLocal ? (pane.path as NSString).abbreviatingWithTildeInPath : pane.path)
+                        .themedFont(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.head)
+                        .textSelection(.enabled).help(pane.path)
                 }
-                if store.panes.count > 1 { Button("Close Pane", systemImage: "xmark") { store.closePane(pane) } }
-                if store.panes.count < 4 { Button("Add Browser Pane", systemImage: "plus") { store.addPane() } }
-            } label: { Image(systemName: "ellipsis.circle") }
-            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .frame(height: 24).padding(.bottom, 3)
+            }
         }
         .buttonStyle(.borderless)
         .themedFont(.callout)
-        .padding(.horizontal, store.theme.label ? 12 : 10).frame(height: store.theme.label ? 42 : 34)
+        .padding(.horizontal, store.theme.label ? 12 : 10)
         .themeBackground(store.theme.bar, .bar)
         .overlay(alignment: .top) {
             if isActive && !store.theme.label {
@@ -428,81 +460,100 @@ struct LocationCard: View {
     }
 }
 
-/// The strip between two panes: copy the selection across, or sync the two folders.
+/// The strip between two panes: copy the selection across, or preview a sync of the two folders.
+/// `stacked`: the panes sit top and bottom, so the strip lies flat between them.
 struct CenterStrip: View {
     @Environment(Store.self) private var store
     let left: Pane, right: Pane
+    var stacked = false
     @AppStorage("syncMode") private var mode = SyncMode.upload
-    @State private var showSync = false
+    @State private var showHelp = false
+    @State private var hover: Task<Void, Never>?
 
     var body: some View {
         let ready = left.service != nil && right.service != nil
-        VStack(spacing: 12) {
+        let layout = stacked ? AnyLayout(HStackLayout(spacing: 14)) : AnyLayout(VStackLayout(spacing: 10))
+        layout {
             Spacer()
-            Button { copy(left, right) } label: { Image(systemName: "arrow.right").frame(width: 22, height: 18) }
-                .help("Copy the selection to the right").disabled(!ready || left.selection.isEmpty)
-            Button { copy(right, left) } label: { Image(systemName: "arrow.left").frame(width: 22, height: 18) }
-                .help("Copy the selection to the left").disabled(!ready || right.selection.isEmpty)
-            Divider().frame(width: 30).padding(.vertical, 4)
-            Button { showSync = true } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
-                    .font(.title3.weight(.semibold)).foregroundStyle(ready ? store.theme.onAccent : .white)
-                    .frame(width: 40, height: 40)
-                    .background(Circle().fill(ready ? AnyShapeStyle(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing)) : AnyShapeStyle(Color.secondary.opacity(0.4))))
-                    .shadow(color: store.theme.label && ready ? store.theme.accent.opacity(0.55) : .clear, radius: 10)
-                    .background { if store.theme.label { RingText(text: "SYNC ✦ DRY RUN ✦ UNDO ✦ ", radius: 29, color: ready ? store.theme.accent : .secondary) } }
-                    .frame(width: 68, height: 68)
+            copyButton(from: left, to: right, symbol: stacked ? "arrow.down" : "arrow.right", ready: ready)
+            copyButton(from: right, to: left, symbol: stacked ? "arrow.up" : "arrow.left", ready: ready)
+            if ready && left.selection.isEmpty && right.selection.isEmpty {
+                Text("Select files to copy them across").themedFont(.caption2).foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center).frame(maxWidth: stacked ? 120 : 70).fixedSize(horizontal: false, vertical: true)
             }
-            .buttonStyle(.plain)
-            .disabled(!ready || store.planning)
-            .help(ready ? "Sync these two folders" : "Open a location on both sides to sync")
-            .popover(isPresented: $showSync, arrowEdge: .trailing) { options }
-            if store.planning { ProgressView().controlSize(.small) }
+            Divider().frame(width: stacked ? nil : 30, height: stacked ? 30 : nil).padding(stacked ? .horizontal : .vertical, 4)
+            syncButton(ready: ready)
             Spacer()
         }
         .labelButtons(store.theme.label, accent: store.theme.accent)
         .buttonStyle(.bordered)
-        .frame(width: store.theme.label ? 76 : 54)
+        .frame(width: stacked ? nil : 88, height: stacked ? 64 : nil)
+        .frame(maxWidth: stacked ? .infinity : nil, maxHeight: stacked ? nil : .infinity)
         .themeBackground(store.theme.strip, .background.secondary)
+    }
+
+    private func copyButton(from: Pane, to: Pane, symbol: String, ready: Bool) -> some View {
+        let n = from.selection.count
+        return Button { copy(from, to) } label: {
+            VStack(spacing: 1) {
+                Image(systemName: symbol)
+                Text(n > 0 ? "Copy \(n)" : "Copy").themedFont(.caption2).monospacedDigit()
+            }
+            .frame(width: 46)
+        }
+        .disabled(!ready || n == 0)
+        .help(n > 0 ? "Copy the \(n) selected item(s) to \(to.title). You can undo it afterwards."
+                    : "Select files in \(from.title) to copy them to \(to.title)")
+    }
+
+    /// Never syncs straight away: it opens the preview, where Sync is the last step.
+    private func syncButton(ready: Bool) -> some View {
+        let label = store.theme.label
+        let stack = stacked ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 3))
+        return stack {
+            Button { hover?.cancel(); showHelp = false; Task { await store.sync(mode, left, right, dryRun: true) } } label: {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.title3.weight(.semibold)).foregroundStyle(ready ? store.theme.onAccent : .white)
+                    .frame(width: stacked ? 34 : 40, height: stacked ? 34 : 40)
+                    .background(Circle().fill(ready ? AnyShapeStyle(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing)) : AnyShapeStyle(Color.secondary.opacity(0.4))))
+                    .shadow(color: label && ready ? store.theme.accent.opacity(0.55) : .clear, radius: 10)
+            }
+            .buttonStyle(.plain)
+            .disabled(!ready || store.planning)
+            .accessibilityLabel("Preview sync")
+            .onHover { on in
+                hover?.cancel()
+                if on && ready { hover = Task { try? await Task.sleep(for: .milliseconds(450)); if !Task.isCancelled { showHelp = true } } }
+                else { showHelp = false }
+            }
+            .popover(isPresented: $showHelp, arrowEdge: stacked ? .top : .trailing) { help }
+            VStack(spacing: 1) {
+                if store.planning { ProgressView().controlSize(.mini) }
+                else if label { Text("PREVIEW SYNC").font(bebas(15)).tracking(0.5).foregroundStyle(ready ? store.theme.accent : .secondary) }
+                else { Text("Preview sync").themedFont(.caption.weight(.semibold)).foregroundStyle(ready ? .primary : .secondary) }
+                Text("Undo anytime").themedFont(.caption2).foregroundStyle(.secondary)
+            }
+            .fixedSize()
+        }
+        .help(ready ? "" : "Open a location on both sides to sync")
+    }
+
+    private var help: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("How sync works").themedFont(.headline)
+            Label("Click: you first see what would change. Nothing changes yet.", systemImage: "1.circle")
+            Label("Pick the direction there and check the list. Then click Sync.", systemImage: "2.circle")
+            Label("Changed your mind? Undo in the status bar, with ⌘Z or in Activity.", systemImage: "3.circle")
+            Text("Nothing is ever deleted. Files that get replaced are backed up first.").themedFont(.caption).foregroundStyle(.secondary)
+        }
+        .themedFont(.callout)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(14).frame(width: 290)
     }
 
     private func copy(_ from: Pane, _ to: Pane) {
         guard let e = from.endpoint else { return }
         let items = from.selected
         Task { await store.copy(items, from: e, to: to) }
-    }
-
-    private var options: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Sync Folders").themedFont(.headline)
-            Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 4) {
-                GridRow { Text("A").bold(); Text("\(left.title): \(left.path)").lineLimit(1).truncationMode(.middle) }
-                GridRow { Text("B").bold(); Text("\(right.title): \(right.path)").lineLimit(1).truncationMode(.middle) }
-            }
-            .themedFont(.caption).foregroundStyle(.secondary)
-            Picker("Direction", selection: $mode) {
-                ForEach(SyncMode.allCases) { m in Label(m.title, systemImage: m.symbol).tag(m) }
-            }
-            .pickerStyle(.radioGroup).labelsHidden()
-            if let b = store.pairable(left, right) {
-                Toggle("Auto-upload changes from this Mac to \(b.title)", isOn: Binding(get: { store.autoSyncOn(left, right) }, set: { store.setAutoSync($0, left, right) }))
-                    .help("Watches the folder on this Mac and uploads what changes, as long as Technoduck is open.")
-            }
-            let ex = [left.bookmark, right.bookmark].compactMap { b in store.bookmarks.first { $0.id == b?.id }?.excludes }.filter { !$0.isEmpty }
-            if !ex.isEmpty {
-                Label("Skipping: \(ex.joined(separator: ", "))", systemImage: "line.3.horizontal.decrease.circle").themedFont(.caption).foregroundStyle(.secondary).lineLimit(2)
-            }
-            Text("Nothing is ever deleted. Files that get replaced are backed up first, so every sync can be undone. Hidden files are included only when View › Show Hidden Files is on.")
-                .themedFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            HStack {
-                Button("Dry Run") { showSync = false; Task { await store.sync(mode, left, right, dryRun: true) } }
-                    .help("Compare only and show what would be copied")
-                Spacer()
-                Button("Sync Now") { showSync = false; Task { await store.sync(mode, left, right, dryRun: false) } }
-                    .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(16)
-        .frame(width: 360)
     }
 }

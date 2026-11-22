@@ -85,6 +85,12 @@ import UniformTypeIdentifiers
     var message = ""
     var planning = false
     var plan: SyncPlan?
+    /// The two panes the open sync preview compares, for its auto-upload switch.
+    var planPanes: (Pane, Pane)?
+    /// The last sync or copy, offered as Undo in the status bar while it can still be undone.
+    var lastUndo: UUID?
+    /// Top and bottom instead of side by side; only with two panes.
+    var stacked = UserDefaults.standard.bool(forKey: "stackedPanes") { didSet { UserDefaults.standard.set(stacked, forKey: "stackedPanes") } }
     var theme = Theme(rawValue: ProcessInfo.processInfo.environment["TECHNODUCK_THEME"] ?? UserDefaults.standard.string(forKey: "theme") ?? "") ?? .system {
         didSet { if !isDemo { UserDefaults.standard.set(theme.rawValue, forKey: "theme") } }
     }
@@ -199,7 +205,7 @@ import UniformTypeIdentifiers
         if let s = panes.first(where: { $0.locationID == id })?.service { return s }
         return bookmarks.first { $0.id == id }.map { makeService($0, password: Keychain.get($0)) }
     }
-    private func excludes(_ e: Endpoint) -> [String] {
+    func excludes(_ e: Endpoint) -> [String] {
         guard let b = e.bookmark else { return [] }
         return (bookmarks.first { $0.id == b.id } ?? b).excludeList
     }
@@ -258,9 +264,11 @@ import UniformTypeIdentifiers
                 if d.isDir { for (k, v) in try await walk(dst.service, d.path, hidden: true, strict: true, exclude: ex).files { b[item.name + "/" + k] = v } }
             }
             message = ""
-            await run(SyncPlan(mode: .upload, a: src, b: dst, ops: makePlan(local: a, remote: b, mode: .upload, force: true)),
-                      title: "Copied " + (items.count == 1 ? items[0].name : "\(items.count) items") + " to \(dest.title)",
-                      kind: dst.service is LocalService ? .download : .upload)
+            let p = SyncPlan(mode: .upload, a: src, b: dst, ops: makePlan(local: a, remote: b, mode: .upload, force: true),
+                             title: "Copied " + (items.count == 1 ? items[0].name : "\(items.count) items") + " to \(dest.title)",
+                             kind: dst.service is LocalService ? .download : .upload)
+            // Replacing files: show what first. Only new files: just copy, the status bar offers Undo.
+            if p.ops.contains(where: \.overwrite) { planPanes = nil; plan = p } else { await run(p, title: p.title!, kind: p.kind) }
         } catch { message = "Copy failed: \(error.localizedDescription)" }
     }
 
@@ -295,6 +303,7 @@ import UniformTypeIdentifiers
     func sync(_ mode: SyncMode, _ left: Pane, _ right: Pane, dryRun: Bool) async {
         guard let a = left.endpoint, let b = right.endpoint else { return }
         rememberPair(a, b)
+        if dryRun { planPanes = (left, right) }
         await sync(mode, a, b, dryRun: dryRun)
     }
     /// `auto` runs quietly for auto-upload.
@@ -307,9 +316,12 @@ import UniformTypeIdentifiers
             async let r = walk(b.service, b.root, hidden: hidden, strict: true, limit: 100_000, exclude: ex)
             let (lw, rw) = try await (l, r)
             guard lw.complete, rw.complete else { throw ServiceError("More than 100,000 files — pick a smaller folder.") }
-            let p = SyncPlan(mode: mode, a: a, b: b, ops: makePlan(local: lw.files, remote: rw.files, mode: mode))
+            var p = SyncPlan(mode: mode, a: a, b: b, ops: makePlan(local: lw.files, remote: rw.files, mode: mode))
             message = ""
-            if dryRun { plan = p }
+            if dryRun {
+                if let open = plan, open.title == nil { p.id = open.id }  // a new direction in an open preview updates it in place
+                plan = p
+            }
             else if p.ops.isEmpty { if !auto { message = "Already in sync — nothing to copy." } }
             else { await run(p, title: (auto ? "Auto-sync " : "Sync ") + mode.title.components(separatedBy: "  ·  ")[0], kind: .sync, quiet: auto) }
         } catch { message = "Compare failed: \(error.localizedDescription)" }
@@ -334,6 +346,13 @@ import UniformTypeIdentifiers
             while records.count > undoLimit { try? FileManager.default.removeItem(at: backups.appendingPathComponent(records.removeFirst().id.uuidString)) }
             save(records, "syncs.json")
             t.recordID = rec.id
+            if !quiet {
+                lastUndo = rec.id
+                // Edit › Undo (⌘Z) in the main window; a no-op if it was undone from Activity first.
+                let id = rec.id, um = (NSApp.delegate as? AppDelegate)?.window?.undoManager
+                um?.registerUndo(withTarget: self) { s in Task { await s.rollback(id) } }
+                um?.setActionName(title)
+            }
         }
         t.state = errors.isEmpty ? .done : .failed("\(errors.count) of \(p.ops.count) failed — \(errors[0])")
         if doneSound && !quiet { NSSound(named: errors.isEmpty ? "Glass" : "Basso")?.play() }
@@ -362,6 +381,7 @@ import UniformTypeIdentifiers
             t.progress = Double(n + 1) / Double(rec.applied.count)
         }
         if errors.isEmpty { try? FileManager.default.removeItem(at: dir) }
+        message = errors.isEmpty ? "Undone: \(rec.title)" : "Undo of \(rec.title) partly failed — see Activity"
         t.state = errors.isEmpty ? .done : .failed("\(errors.count) could not be undone — \(errors[0]). Backups kept in \(dir.path)")
         for bid in Set([rec.aBookmarkID, rec.bookmarkID].compactMap { $0 }) {
             addLog(LogEvent(bookmarkID: bid, kind: .rollback, title: "Undid \(rec.title)",

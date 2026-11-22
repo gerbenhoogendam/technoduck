@@ -64,6 +64,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     @objc func refreshAll(_ sender: Any?) { Task { await store.refreshAll() } }
     @objc func showActivity(_ sender: Any?) { store.showInspector.toggle() }
     @objc func addPane(_ sender: Any?) { store.addPane() }
+    @objc func toggleStacked(_ sender: Any?) { store.stacked.toggle() }
     @objc func setTheme(_ sender: NSMenuItem) { store.theme = Theme(rawValue: sender.representedObject as? String ?? "") ?? .system }
     @objc func toggleICloud(_ sender: Any?) { store.setICloud(!store.iCloud) }
     @objc func restoreBookmarks(_ sender: Any?) { store.restoreLibrary() }
@@ -77,6 +78,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
         if item.action == #selector(toggleICloud(_:)) { item.state = store.iCloud ? .on : .off }
         if item.action == #selector(setTheme(_:)) { item.state = store.theme.rawValue == item.representedObject as? String ? .on : .off }
         if item.action == #selector(addPane(_:)) { return store.panes.count < 4 }
+        if item.action == #selector(toggleStacked(_:)) { item.state = store.stacked ? .on : .off; return store.panes.count == 2 }
         return true
     }
 }
@@ -101,6 +103,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     view.addItem(withTitle: "Show Hidden Files", action: #selector(AppDelegate.toggleHidden(_:)), keyEquivalent: ".").keyEquivalentModifierMask = [.command, .shift]
     view.addItem(withTitle: "Refresh", action: #selector(AppDelegate.refreshAll(_:)), keyEquivalent: "r")
     view.addItem(withTitle: "Add Browser Pane", action: #selector(AppDelegate.addPane(_:)), keyEquivalent: "t")
+    view.addItem(withTitle: "Two Panes Top and Bottom", action: #selector(AppDelegate.toggleStacked(_:)), keyEquivalent: "d").keyEquivalentModifierMask = [.command, .option]
     view.addItem(.separator())
     let themes = NSMenu(title: "Theme")
     for t in Theme.allCases {

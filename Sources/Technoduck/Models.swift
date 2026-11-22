@@ -134,8 +134,8 @@ enum SyncMode: String, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .upload: "A → B  ·  Left to right"
-        case .download: "B → A  ·  Right to left"
+        case .upload: "A → B  ·  One way"
+        case .download: "B → A  ·  One way"
         case .both: "A ⇄ B  ·  Both ways, newest wins"
         }
     }
@@ -155,11 +155,14 @@ struct SyncOp: Codable, Hashable, Identifiable {
 }
 
 struct SyncPlan: Identifiable {
-    let id = UUID()
+    var id = UUID()
     var mode: SyncMode
     var a: Endpoint
     var b: Endpoint
     var ops: [SyncOp]
+    /// Set for a copy of picked items: the title it gets in Activity. nil for a sync of two folders.
+    var title: String? = nil
+    var kind = Activity.sync
     func files(to s: Side) -> [SyncOp] { ops.filter { $0.to == s && !$0.isDir } }
     func bytes(to s: Side) -> Int64 { files(to: s).reduce(0) { $0 + $1.size } }
     var summary: String {

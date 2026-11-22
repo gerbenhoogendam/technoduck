@@ -14,9 +14,10 @@ A native macOS file-transfer client written in Swift and SwiftUI, with a local f
 
 ## Features
 
-- **Up to four browsers:** each pane shows your Mac or any server. Drag the dividers to resize, drag a pane's ≡ grip to move it, and drag files between panes or in from Finder.
-- **Sync between any two neighbouring panes:** A → B, B → A, or both ways (newest wins). A **Dry Run** compares only and lists every file that would be copied, with totals per direction.
-- **Undo:** files that get replaced are backed up first, so any sync or copy can be rolled back from the Transfers or Timeline panel. A sync never deletes anything.
+- **Up to four browsers:** each pane shows your Mac or any server. Drag the dividers to resize, drag a pane's ≡ grip to move it, and drag files between panes or in from Finder. With two panes, View › Two Panes Top and Bottom (⌥⌘D) stacks them.
+- **Sync between any two neighbouring panes:** A → B, B → A, or both ways (newest wins). The sync button always shows a preview first, with every file that would be copied and the totals; nothing moves until you click Sync there.
+- **Copy across:** select files and click Copy in the strip between the panes. A copy that would replace files shows the same preview first.
+- **Undo:** files that get replaced are backed up first, so any sync or copy can be rolled back: Undo in the status bar, Edit › Undo (⌘Z), or the Transfers and Timeline panel. A sync never deletes anything.
 - **Timeline per connection:** uploads, downloads, syncs, deletes and undos, grouped by day.
 - **Folder sizes:** every folder's total size is worked out in the background.
 - **Hidden files:** View › Show Hidden Files (⇧⌘.).

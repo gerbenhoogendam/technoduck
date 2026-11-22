@@ -15,43 +15,46 @@ extension Activity {
 }
 
 /// The result of a dry run: what would be copied and how much.
+/// What a sync or a copy is going to do. Nothing changes until you click Sync (or Copy) here.
 struct SyncPlanSheet: View {
     @Environment(Store.self) private var store
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("syncMode") private var mode = SyncMode.upload
     let plan: SyncPlan
+
+    private var isCopy: Bool { plan.title != nil }
+    private var verb: String { isCopy ? "Copy" : "Sync" }
 
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 10) {
                 if store.theme.label {
-                    Eyebrow("Nothing has moved yet")
-                    Text("DRY RUN: ").font(bebas(44)) + Text(plan.mode.title.components(separatedBy: "  ·  ")[0].uppercased()).font(bebas(44)).foregroundColor(store.theme.accent)
+                    Eyebrow("Preview · nothing has changed yet")
+                    Text("\(verb.uppercased()): ").font(bebas(44)) + Text(heading.uppercased()).font(bebas(44)).foregroundColor(store.theme.accent)
                 } else {
-                    Text("Dry Run — \(plan.mode.title)").themedFont(.title3.bold())
+                    Text("Preview · nothing has changed yet").themedFont(.caption).foregroundStyle(.secondary)
+                    Text("\(verb): \(heading)").themedFont(.title3.bold())
                 }
                 Text("A  \(plan.a.root)\nB  \(plan.b.root)").themedFont(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(2)
+                if !isCopy { options }
                 HStack(spacing: 28) {
-                    stat("arrow.right.circle.fill", store.theme.label ? store.theme.accent : .orange, "A → B", plan.files(to: .b).count, plan.bytes(to: .b))
-                    stat("arrow.left.circle.fill", store.theme.label ? store.theme.accent : .blue, "B → A", plan.files(to: .a).count, plan.bytes(to: .a))
+                    if plan.mode != .download { stat("arrow.right.circle.fill", store.theme.label ? store.theme.accent : .orange, "A → B", plan.files(to: .b).count, plan.bytes(to: .b)) }
+                    if plan.mode != .upload { stat("arrow.left.circle.fill", store.theme.label ? store.theme.accent : .blue, "B → A", plan.files(to: .a).count, plan.bytes(to: .a)) }
+                    let replaced = plan.ops.filter(\.overwrite).count
+                    if replaced > 0 { count(replaced, "Replaced, backed up first", "arrow.triangle.2.circlepath", .orange) }
                     let dirs = plan.ops.filter(\.isDir).count
-                    if dirs > 0, store.theme.label {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("\(dirs)").font(bebas(30)).foregroundStyle(store.theme.accent)
-                            Text("NEW FOLDERS").font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(.secondary)
-                        }
-                    } else if dirs > 0 {
-                        HStack(spacing: 8) {
-                            Image(systemName: "folder.badge.plus").font(.title2).foregroundStyle(.green)
-                            VStack(alignment: .leading) { Text("New folders").themedFont(.caption).foregroundStyle(.secondary); Text("\(dirs)").themedFont(.headline) }
-                        }
-                    }
+                    if dirs > 0 { count(dirs, "New folders", "folder.badge.plus", .green) }
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            .fixedSize(horizontal: false, vertical: true)  // the list below gives way, not the paths
             .padding()
+            .opacity(store.planning ? 0.5 : 1)
             Divider()
-            if plan.ops.isEmpty {
-                ContentUnavailableView("Already in Sync", systemImage: "checkmark.circle", description: Text("Nothing would be copied."))
+            if store.planning {
+                ProgressView("Comparing…").frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if plan.ops.isEmpty {
+                ContentUnavailableView("Already in Sync", systemImage: "checkmark.circle", description: Text("Nothing would be copied this way."))
             } else {
                 Table(plan.ops) {
                     TableColumn("") { op in
@@ -67,27 +70,66 @@ struct SyncPlanSheet: View {
             }
             Divider()
             HStack {
-                Text(plan.summary).themedFont(.callout).foregroundStyle(.secondary)
+                Label("You can undo this afterwards: status bar, ⌘Z or Activity.", systemImage: "arrow.uturn.backward")
+                    .themedFont(.callout).foregroundStyle(.secondary).lineLimit(1)
                 Spacer()
-                Button("Close", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                     .labelButtons(store.theme.label, accent: store.theme.accent)
-                Button("Sync Now") {
+                Button("\(verb) \(plan.ops.count) \(plan.ops.count == 1 ? "Item" : "Items")") {
                     let p = plan; dismiss()
-                    Task { await store.run(p, title: "Sync " + p.mode.title.components(separatedBy: "  ·  ")[0]) }
+                    Task { await store.run(p, title: p.title ?? "Sync " + p.mode.title.components(separatedBy: "  ·  ")[0], kind: p.kind) }
                 }
-                .keyboardShortcut(.defaultAction).disabled(plan.ops.isEmpty)
+                .keyboardShortcut(.defaultAction).disabled(plan.ops.isEmpty || store.planning)
                 .labelButtons(store.theme.label, accent: store.theme.accent, prominent: true)
             }
             .padding()
         }
-        .frame(width: 680, height: store.theme.label ? 520 : 480)
+        .frame(width: 700, height: store.theme.label ? 580 : 540)
         .background(store.theme.label ? store.theme.bar ?? .clear : .clear)
+        .onAppear { if !isCopy { mode = plan.mode } }
+    }
+
+    private var heading: String {
+        isCopy ? { let n = plan.ops.filter(\.overwrite).count; return "replaces \(n) existing \(n == 1 ? "file" : "files")" }() : plan.mode.title.components(separatedBy: "  ·  ")[0]
+    }
+
+    /// Direction, auto-upload and what gets skipped. Picking another direction compares again.
+    private var options: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Picker("Direction", selection: $mode) {
+                ForEach(SyncMode.allCases) { m in Text(m.title).tag(m) }
+            }
+            .pickerStyle(.segmented).labelsHidden().fixedSize()
+            .onChange(of: mode) { if mode != plan.mode { Task { await store.sync(mode, plan.a, plan.b, dryRun: true) } } }
+            if let pp = store.planPanes, let b = store.pairable(pp.0, pp.1) {
+                Toggle("Keep uploading changes from this Mac to \(b.title) while Technoduck is open",
+                       isOn: Binding(get: { store.autoSyncOn(pp.0, pp.1) }, set: { store.setAutoSync($0, pp.0, pp.1) }))
+                    .themedFont(.callout)
+            }
+            let ex = store.excludes(plan.a) + store.excludes(plan.b)
+            Text((ex.isEmpty ? "" : "Skipping \(ex.joined(separator: ", ")). ") + (store.showHidden ? "Hidden files included." : "Hidden files skipped (View › Show Hidden Files)."))
+                .themedFont(.caption).foregroundStyle(.secondary).lineLimit(2)
+        }
+    }
+
+    @ViewBuilder private func count(_ n: Int, _ title: String, _ symbol: String, _ color: Color) -> some View {
+        if store.theme.label {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(n)").font(bebas(30)).foregroundStyle(store.theme.accent)
+                Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(.secondary)
+            }
+        } else {
+            HStack(spacing: 8) {
+                Image(systemName: symbol).font(.title2).foregroundStyle(color)
+                VStack(alignment: .leading) { Text(title).themedFont(.caption).foregroundStyle(.secondary); Text("\(n)").themedFont(.headline) }
+            }
+        }
     }
 
     @ViewBuilder private func stat(_ symbol: String, _ color: Color, _ title: String, _ n: Int, _ bytes: Int64) -> some View {
         if store.theme.label {   // big condensed numbers in the accent, a spaced caption below
             VStack(alignment: .leading, spacing: 2) {
-                Text("\(n) FILES · \(fmtBytes(bytes).uppercased())").font(bebas(30)).foregroundStyle(n > 0 ? color : .secondary)
+                Text("\(n) \(n == 1 ? "FILE" : "FILES") · \(fmtBytes(bytes).uppercased())").font(bebas(30)).foregroundStyle(n > 0 ? color : .secondary)
                 Text(title).font(.system(size: 10, weight: .semibold)).tracking(2).foregroundStyle(.secondary)
             }
         } else {
@@ -95,7 +137,7 @@ struct SyncPlanSheet: View {
             Image(systemName: symbol).font(.title2).foregroundStyle(color)
             VStack(alignment: .leading) {
                 Text(title).themedFont(.caption).foregroundStyle(.secondary)
-                Text("\(n) files · \(fmtBytes(bytes))").themedFont(.headline).monospacedDigit()
+                Text("\(n) \(n == 1 ? "file" : "files") · \(fmtBytes(bytes))").themedFont(.headline).monospacedDigit()
             }
         }
         }
@@ -108,6 +150,12 @@ struct StatusBar: View {
         HStack(spacing: 8) {
             if store.planning || store.panes.contains(where: \.busy) { ProgressView().controlSize(.small) }
             Text(store.message.isEmpty ? " " : store.message).lineLimit(1).truncationMode(.tail)
+            if let id = store.lastUndo, store.canUndo(id), let r = store.records.first(where: { $0.id == id }) {
+                Label(r.title, systemImage: "checkmark.circle").lineLimit(1).truncationMode(.middle)
+                Button("Undo") { Task { await store.rollback(id) } }
+                    .controlSize(.small).help("Puts back what \(r.title) changed (⌘Z)")
+                    .labelButtons(store.theme.label, accent: store.theme.accent)
+            }
             Spacer()
             if store.showHidden { Label("Hidden files shown", systemImage: "eye").labelStyle(.titleAndIcon) }
             if let c = store.active?.bookmark { Image(systemName: "lock.fill").opacity(c.proto == .ftp || c.proto == .webdav ? 0 : 1); Text(c.proto.rawValue) }
