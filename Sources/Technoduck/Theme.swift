@@ -68,11 +68,14 @@ enum Theme: String, CaseIterable, Identifiable {
     var strip: Color? { [.midnight: Color(hex: 0x1A1D2C), .daylight: Color(hex: 0xF5F2F8), .pond: Color(hex: 0x0C191B), .mac512: .white, .lime: Color(hex: 0x0B0B0C)][self] }
 }
 
-/// Registers a font from Resources. The .app carries a copy; a plain `swift build` reads it from the source tree.
+/// A file from Resources. The .app carries a copy; a plain `swift build` reads it from the source tree.
+func resourceURL(_ name: String, _ ext: String, in dir: String? = nil) -> URL {
+    Bundle.main.url(forResource: name, withExtension: ext, subdirectory: dir)
+        ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../Resources/\(dir.map { $0 + "/" } ?? "")\(name).\(ext)").standardized
+}
 private func register(_ name: String) {
-    let url = Bundle.main.url(forResource: name, withExtension: "ttf")
-        ?? URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources/\(name).ttf").standardized
-    CTFontManagerRegisterFontsForURL(url as CFURL, .process, nil)
+    CTFontManagerRegisterFontsForURL(resourceURL(name, "ttf") as CFURL, .process, nil)
 }
 /// ChicagoFLF, a public-domain revival of the 1984 Mac system font (Resources/README.ChicagoFLF).
 private let chicago: Font = { register("ChicagoFLF"); return .custom("ChicagoFLF", size: 12) }()

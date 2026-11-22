@@ -96,6 +96,9 @@ import UniformTypeIdentifiers
     var doneSound = UserDefaults.standard.bool(forKey: "doneSound") { didSet { UserDefaults.standard.set(doneSound, forKey: "doneSound") } }
     /// How many syncs and copies can be undone; older backups are deleted.
     var undoLimit = UserDefaults.standard.object(forKey: "undoLimit") as? Int ?? 30 { didSet { UserDefaults.standard.set(undoLimit, forKey: "undoLimit") } }
+    var appIcon = AppIcon(rawValue: UserDefaults.standard.string(forKey: "appIcon") ?? "") ?? .goggles {
+        didSet { UserDefaults.standard.set(appIcon.rawValue, forKey: "appIcon"); appIcon.apply() }
+    }
 
     private static let support = URL(fileURLWithPath: homeDir).appendingPathComponent("Library/Application Support")
     private let dir = support.appendingPathComponent("Technoduck")

@@ -12,6 +12,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     var settings: NSWindow?
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        store.appIcon.apply()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1400, height: 820),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView], backing: .buffered, defer: false)
         window.contentView = NSHostingView(rootView: RootView().environment(store))

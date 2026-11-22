@@ -5,10 +5,11 @@ struct SettingsView: View {
     @Environment(Store.self) private var store
     @State private var backupSize: Int64?
     @State private var confirmClear = false
+    @AppStorage("settingsTab") private var tab = "general"
 
     var body: some View {
         @Bindable var store = store
-        TabView {
+        TabView(selection: $tab) {
             Form {
                 Picker("Theme", selection: $store.theme) {
                     ForEach(Theme.allCases) { t in
@@ -23,7 +24,10 @@ struct SettingsView: View {
                     Text("Folder sizes are worked out in the background. Turn this off for very large or slow servers.").foregroundStyle(.secondary).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .tabItem { Label("General", systemImage: "gearshape") }
+            .tabItem { Label("General", systemImage: "gearshape") }.tag("general")
+
+            IconPicker()
+                .tabItem { Label("Icon", systemImage: "app.badge") }.tag("icon")
 
             Form {
                 Toggle("Show Activity when a transfer starts", isOn: $store.autoShowActivity)
@@ -40,7 +44,7 @@ struct SettingsView: View {
                     Text("Before a sync replaces a file, the old version is kept so the sync can be undone.").foregroundStyle(.secondary).multilineTextAlignment(.leading).frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .tabItem { Label("Transfers", systemImage: "arrow.up.arrow.down") }
+            .tabItem { Label("Transfers", systemImage: "arrow.up.arrow.down") }.tag("transfers")
             .confirmationDialog("Clear the undo history?", isPresented: $confirmClear) {
                 Button("Clear Undo History", role: .destructive) { store.clearUndoHistory(); backupSize = 0 }
             } message: {
@@ -58,7 +62,7 @@ struct SettingsView: View {
                 }
                 Text("Passwords are not synced; they stay in each Mac's Keychain.").foregroundStyle(.secondary)
             }
-            .tabItem { Label("Bookmarks", systemImage: "bookmark") }
+            .tabItem { Label("Bookmarks", systemImage: "bookmark") }.tag("bookmarks")
         }
         .formStyle(.grouped)
         .scrollContentBackground(store.theme.canvas == nil ? .automatic : .hidden)
@@ -80,5 +84,64 @@ private struct Swatch: View {
             .overlay(Capsule().fill(theme.gradient).frame(width: 18, height: 5))
             .overlay(RoundedRectangle(cornerRadius: 4).strokeBorder(.separator))
             .frame(width: 30, height: 18)
+    }
+}
+
+/// The Dock icons to choose from. The .app's own icon (Resources/AppIcon.png) is `goggles`.
+enum AppIcon: String, CaseIterable, Identifiable {
+    case goggles, deepSync = "deep-sync", pixel, redAlert = "red-alert", lime, copper, chrome, wavelength, ledVisor = "led-visor", frost
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .goggles: "Goggles"
+        case .deepSync: "Deep Sync"
+        case .pixel: "Pixel"
+        case .redAlert: "Red Alert"
+        case .lime: "Label Lime"
+        case .copper: "Copper"
+        case .chrome: "Chrome"
+        case .wavelength: "Wavelength"
+        case .ledVisor: "LED Visor"
+        case .frost: "Frost"
+        }
+    }
+    private static let images = Dictionary(uniqueKeysWithValues: allCases.compactMap { i in
+        NSImage(contentsOf: resourceURL(i.rawValue, "png", in: "Icons")).map { (i, $0) }
+    })
+    var image: NSImage? { Self.images[self] }
+    /// Shows this icon in the Dock and the app switcher while Technoduck runs; nil brings back the .app's own icon.
+    @MainActor func apply() { NSApp.applicationIconImage = self == .goggles ? nil : image }
+}
+
+/// Settings › Icon: a grid of ducks.
+private struct IconPicker: View {
+    @Environment(Store.self) private var store
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 14) {
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 6), count: 5), spacing: 12) {
+                    ForEach(AppIcon.allCases) { icon in
+                        let on = store.appIcon == icon
+                        Button { store.appIcon = icon } label: {
+                            VStack(spacing: 4) {
+                                Image(nsImage: icon.image ?? NSImage()).resizable().interpolation(.high).frame(width: 64, height: 64)
+                                    .padding(5)
+                                    .background(RoundedRectangle(cornerRadius: store.theme.corner(14)).fill(on ? store.theme.accent.opacity(0.18) : .clear))
+                                    .overlay(RoundedRectangle(cornerRadius: store.theme.corner(14)).strokeBorder(on ? store.theme.accent : .clear, lineWidth: 2))
+                                Text(icon.title).themedFont(.caption).fontWeight(on ? .semibold : .regular).lineLimit(1)
+                                    .foregroundStyle(on ? .primary : .secondary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .help(icon.title)
+                        .accessibilityAddTraits(on ? .isSelected : [])
+                    }
+                }
+                Text("The duck in the Dock and the app switcher while Technoduck runs. Finder and a closed Dock icon keep Goggles.")
+                    .themedFont(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(20)
+        }
     }
 }
