@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import UniformTypeIdentifiers
 
 /// One file browser. Shows this Mac's disk or a server; without a location it offers the bookmarks.
 @MainActor @Observable final class Pane: Identifiable {
@@ -623,6 +624,58 @@ func bookmark(fromQuickConnect text: String) -> Bookmark {
     }
     b.host = host; b.user = u.user ?? ""; b.port = u.port ?? b.proto.defaultPort; b.path = u.path
     return b
+}
+
+/// A Cyberduck .duck bookmark (a plist) as a Technoduck bookmark; nil for protocols we don't speak (S3, Dropbox…).
+func bookmark(fromCyberduck d: [String: Any]) -> Bookmark? {
+    let proto: Proto
+    switch (d["Protocol"] as? String)?.lowercased() {
+    case "sftp": proto = .sftp
+    case "ftp": proto = .ftp
+    case "ftps": proto = .ftps   // Cyberduck's FTP-SSL is explicit TLS, like ours
+    case "dav": proto = .webdav
+    case "davs": proto = .webdavs
+    default: return nil
+    }
+    guard let host = d["Hostname"] as? String, !host.isEmpty else { return nil }
+    var b = Bookmark()
+    b.proto = proto; b.host = host
+    b.port = Int(d["Port"] as? String ?? "") ?? (d["Port"] as? Int) ?? proto.defaultPort
+    b.user = d["Username"] as? String ?? ""
+    b.nickname = d["Nickname"] as? String ?? ""
+    b.path = d["Path"] as? String ?? ""
+    if let id = (d["UUID"] as? String).flatMap(UUID.init) { b.id = id }   // importing twice finds the same ids
+    return b
+}
+
+extension Store {
+    /// Adds Cyberduck's bookmarks, skipping ones already here. Passwords stay in Cyberduck's Keychain items;
+    /// Technoduck asks for each one on first connect.
+    func importCyberduck() {
+        let fm = FileManager.default, home = fm.homeDirectoryForCurrentUser
+        let folders = ["Library/Group Containers/G69SCX94XU.duck/Library/Application Support/duck/Bookmarks",
+                       "Library/Application Support/Cyberduck/Bookmarks"].map { home.appendingPathComponent($0) }
+        var files = folders.flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: nil)) ?? [] }
+            .filter { $0.pathExtension == "duck" }
+        if files.isEmpty {
+            let p = NSOpenPanel()
+            p.allowsMultipleSelection = true; p.canChooseDirectories = false
+            p.allowedContentTypes = [UTType(filenameExtension: "duck") ?? .propertyList]
+            p.prompt = "Import"; p.message = "Cyberduck's bookmarks weren't found. Pick .duck files (drag bookmarks out of Cyberduck to get them)."
+            guard p.runModal() == .OK else { return }
+            files = p.urls
+        }
+        let found = files.compactMap { u in
+            (try? PropertyListSerialization.propertyList(from: Data(contentsOf: u), format: nil) as? [String: Any]).flatMap(bookmark(fromCyberduck:))
+        }
+        let same = { (a: Bookmark, b: Bookmark) in a.id == b.id || (a.proto == b.proto && a.host == b.host && a.port == b.port && a.user == b.user && a.path == b.path) }
+        let new = found.filter { f in !bookmarks.contains { same($0, f) } }
+        bookmarks += new
+        let skipped = files.count - found.count
+        message = "Imported \(new.count) bookmark\(new.count == 1 ? "" : "s") from Cyberduck"
+            + (found.count > new.count ? ", \(found.count - new.count) already here" : "")
+            + (skipped > 0 ? ", \(skipped) skipped (S3 and other services aren't supported)" : "") + "."
+    }
 }
 
 // MARK: Demo scenes (for screenshots; only with TECHNODUCK_HOME set)

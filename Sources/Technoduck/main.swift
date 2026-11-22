@@ -66,6 +66,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     @objc func setTheme(_ sender: NSMenuItem) { store.theme = Theme(rawValue: sender.representedObject as? String ?? "") ?? .system }
     @objc func toggleICloud(_ sender: Any?) { store.setICloud(!store.iCloud) }
     @objc func restoreBookmarks(_ sender: Any?) { store.restoreLibrary() }
+    @objc func importCyberduck(_ sender: Any?) { store.importCyberduck() }
     @objc func showBookmarkBackups(_ sender: Any?) {
         try? FileManager.default.createDirectory(at: store.libraryBackups, withIntermediateDirectories: true)
         NSWorkspace.shared.open(store.libraryBackups)
@@ -111,6 +112,7 @@ let shotPath: String? = CommandLine.arguments.firstIndex(of: "--screenshot").fla
     let marks = NSMenu(title: "Bookmarks")
     marks.addItem(withTitle: "Sync Bookmarks with iCloud Drive", action: #selector(AppDelegate.toggleICloud(_:)), keyEquivalent: "")
     marks.addItem(.separator())
+    marks.addItem(withTitle: "Import from Cyberduck…", action: #selector(AppDelegate.importCyberduck(_:)), keyEquivalent: "")
     marks.addItem(withTitle: "Restore Bookmarks from Backup…", action: #selector(AppDelegate.restoreBookmarks(_:)), keyEquivalent: "")
     marks.addItem(withTitle: "Show Bookmark Backups in Finder", action: #selector(AppDelegate.showBookmarkBackups(_:)), keyEquivalent: "")
     let window = NSMenu(title: "Window")
@@ -194,6 +196,9 @@ if CommandLine.arguments.contains("--self-test") {
     let b = bookmark(fromQuickConnect: "ftp://ann@example.com:2121/pub")
     precondition(b.proto == .ftp && b.user == "ann" && b.host == "example.com" && b.port == 2121 && b.path == "/pub")
     precondition(bookmark(fromQuickConnect: "example.com").proto == .sftp)
+    let cd = bookmark(fromCyberduck: ["Protocol": "davs", "Hostname": "dav.example.com", "Port": "8443", "Username": "ann", "Nickname": "Docs", "Path": "/files", "UUID": "02A48079-3F4F-4D87-91E6-4997090D217A"])
+    precondition(cd?.proto == .webdavs && cd?.port == 8443 && cd?.nickname == "Docs" && cd?.path == "/files" && cd?.id.uuidString == "02A48079-3F4F-4D87-91E6-4997090D217A")
+    precondition(bookmark(fromCyberduck: ["Protocol": "s3", "Hostname": "s3.amazonaws.com"]) == nil && bookmark(fromCyberduck: ["Protocol": "ftp", "Hostname": "h"])?.port == 21)
     precondition(parentPath("/a/b") == "/a" && parentPath("/a") == "/")
     precondition(l[2].isLink && !l[1].isLink)
     // The watcher behind auto-upload and editor saves must notice a new file.
