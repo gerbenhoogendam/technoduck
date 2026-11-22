@@ -136,6 +136,37 @@ func syncPlanSelfTest() {
     let both = makePlan(local: l, remote: r, mode: .both).map { "\($0.rel)>\($0.to.rawValue)" }
     precondition(both == ["b>local", "d>remote", "d/e>remote", "r>local"], "\(both)")
     precondition(makePlan(local: ["same": f("same", 5, d0)], remote: ["same": f("same", 5, d0)], mode: .upload, force: true).first?.overwrite == true)
+    // Rules: "b" is newer and bigger on the right, "a" only newer on the left.
+    let strict = SyncRules(replace: .onlyNewer, conflict: .skip)
+    let p1 = planSync(local: l, remote: r, mode: .upload, rules: strict)
+    precondition(p1.ops.map(\.rel) == ["a", "d", "d/e"] && p1.skipped.map(\.rel) == ["b"], "\(p1)")
+    precondition(makePlan(local: l, remote: r, mode: .upload).first { $0.rel == "b" }?.warning != nil)
+    precondition(planSync(local: l, remote: r, mode: .both, rules: strict).skipped.map(\.rel) == ["b"])
+    precondition(makePlan(local: l, remote: r, mode: .both, rules: SyncRules(conflict: .a)).contains { $0.rel == "b" && $0.to == .b })
+    precondition(makePlan(local: l, remote: r, mode: .upload, rules: SyncRules(replace: .never)).map(\.rel) == ["d", "d/e"])
+    precondition(!makePlan(local: l, remote: r, mode: .upload, rules: SyncRules(compare: .sizeOnly)).contains { $0.rel == "a" })
+    // Diff: lines, words inside an edited line, and unchanged runs folded away.
+    let d = diffText("one\ntwo\nthree\n", "one\n2\nthree\nfour\n")
+    precondition(d.lines.map(\.kind) == [.same, .removed, .added, .same, .added, .same] && d.added == 2 && d.removed == 1)
+    let w = diffText("<p>hello world</p>", "<p>hello there</p>").lines[0].text
+    precondition(w.runs.contains { $0.backgroundColor != nil && String(w[$0.range].characters) == "world" })
+    let many = (1...20).map(String.init)
+    precondition(diffText(many.joined(separator: "\n"), many.map { $0 == "10" ? "ten" : $0 }.joined(separator: "\n")).rows().count == 10)
+    precondition(diffText("", "a\nb").lines.allSatisfy { $0.kind != .same || $0.text.characters.isEmpty })
+    // Quick Look picks a comparison by kind; UTF-16 text reads as text; a pixel diff counts what changed.
+    let txt = Data("x".utf8)
+    for (name, kind) in [("a.CSS", FileKind.text), ("logo.svg", .text), ("p.jpg", .image), ("p.webp", .image), ("d.pdf", .pdf),
+                         ("f.woff2", .font), ("v.mp4", .media), ("s.mp3", .media), ("a.zip", .archive), ("a.tar.gz", .archive)] {
+        precondition(FileKind.of(name, txt) == kind, name)
+    }
+    precondition(FileKind.of("x.bin", Data([0, 1, 2])) == .binary && FileKind.of("x", Data("%PDF-1.4".utf8)) == .pdf)
+    precondition(decodeText("Hallo".data(using: .utf16)!) == "Hallo")
+    func square(_ x: Int) -> NSImage {
+        let c = CGContext(data: nil, width: 10, height: 10, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpace(name: CGColorSpace.sRGB)!, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+        c.setFillColor(.white); c.fill(CGRect(x: 0, y: 0, width: 10, height: 10)); c.setFillColor(.black); c.fill(CGRect(x: x, y: 0, width: 2, height: 2))
+        return NSImage(cgImage: c.makeImage()!, size: NSSize(width: 10, height: 10))
+    }
+    precondition(pixelDiff(square(0), square(0))?.changed == 0 && pixelDiff(square(0), square(5))?.changed == 0.08)
     precondition(isExcluded("x.log", "a/x.log", ["*.log"]) && isExcluded("node_modules", "node_modules", ["node_modules"]))
     precondition(isExcluded("y", "cache/y", ["cache/*"]) && !isExcluded("a.txt", "a.txt", ["*.log", "cache/*"]))
     precondition(Bookmark(excludes: " .git,node_modules\n*.log ").excludeList == [".git", "node_modules", "*.log"])

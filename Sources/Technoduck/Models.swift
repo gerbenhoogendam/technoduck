@@ -114,6 +114,9 @@ struct Endpoint {
     let root: String
     var location: UUID?
     var bookmark: Bookmark?
+    /// The folder's name ("public_html"), or the location's for a root.
+    var name: String { let n = (root as NSString).lastPathComponent; return n.isEmpty || n == "/" ? place : n }
+    var place: String { bookmark?.title ?? "This Mac" }
 }
 
 /// A folder pinned in the sidebar. `bookmarkID` nil means this Mac's disk.
@@ -132,14 +135,29 @@ struct Library: Codable {
 enum SyncMode: String, CaseIterable, Identifiable {
     case upload, download, both
     var id: String { rawValue }
-    var title: String {
+    /// For the strip: which way, in screen terms.
+    func label(stacked: Bool) -> String {
         switch self {
-        case .upload: "A → B  ·  One way"
-        case .download: "B → A  ·  One way"
-        case .both: "A ⇄ B  ·  Both ways, newest wins"
+        case .upload: stacked ? "Down" : "To right"
+        case .download: stacked ? "Up" : "To left"
+        case .both: "Both ways"
         }
     }
-    var symbol: String { switch self { case .upload: "arrow.right"; case .download: "arrow.left"; case .both: "arrow.left.arrow.right" } }
+    func symbol(stacked: Bool) -> String {
+        switch self {
+        case .upload: stacked ? "arrow.down" : "arrow.right"
+        case .download: stacked ? "arrow.up" : "arrow.left"
+        case .both: stacked ? "arrow.up.arrow.down" : "arrow.left.arrow.right"
+        }
+    }
+    /// "Website → public_html": names the folders, so it reads right whatever the layout.
+    func phrase(_ a: Endpoint, _ b: Endpoint) -> String {
+        switch self {
+        case .upload: "\(a.name) → \(b.name)"
+        case .download: "\(b.name) → \(a.name)"
+        case .both: "\(a.name) ⇄ \(b.name)"
+        }
+    }
 }
 
 /// One step of a sync: create a folder or copy a file to `to`.
@@ -152,6 +170,8 @@ struct SyncOp: Codable, Hashable, Identifiable {
     var modified: Date?
     var overwrite = false
     var reason = ""
+    /// Set when this replaces something the user may want to keep, e.g. a newer file.
+    var warning: String? = nil
 }
 
 struct SyncPlan: Identifiable {
@@ -163,6 +183,8 @@ struct SyncPlan: Identifiable {
     /// Set for a copy of picked items: the title it gets in Activity. nil for a sync of two folders.
     var title: String? = nil
     var kind = Activity.sync
+    /// Files that differ but that the rules leave alone.
+    var skipped: [SkippedFile] = []
     func files(to s: Side) -> [SyncOp] { ops.filter { $0.to == s && !$0.isDir } }
     func bytes(to s: Side) -> Int64 { files(to: s).reduce(0) { $0 + $1.size } }
     var summary: String {

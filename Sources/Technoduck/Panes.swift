@@ -460,7 +460,7 @@ struct LocationCard: View {
     }
 }
 
-/// The strip between two panes: copy the selection across, or preview a sync of the two folders.
+/// The strip between two panes: pick a direction, then preview a sync of the two folders. Selected files can be copied across.
 /// `stacked`: the panes sit top and bottom, so the strip lies flat between them.
 struct CenterStrip: View {
     @Environment(Store.self) private var store
@@ -468,53 +468,85 @@ struct CenterStrip: View {
     var stacked = false
     @AppStorage("syncMode") private var mode = SyncMode.upload
     @State private var showHelp = false
+    @State private var showRules = false
     @State private var hover: Task<Void, Never>?
 
+    private var ready: Bool { left.service != nil && right.service != nil }
+    private func name(_ p: Pane) -> String { p.endpoint?.name ?? p.title }
+
     var body: some View {
-        let ready = left.service != nil && right.service != nil
-        let layout = stacked ? AnyLayout(HStackLayout(spacing: 14)) : AnyLayout(VStackLayout(spacing: 10))
+        let layout = stacked ? AnyLayout(HStackLayout(spacing: 16)) : AnyLayout(VStackLayout(spacing: 12))
         layout {
             Spacer()
-            copyButton(from: left, to: right, symbol: stacked ? "arrow.down" : "arrow.right", ready: ready)
-            copyButton(from: right, to: left, symbol: stacked ? "arrow.up" : "arrow.left", ready: ready)
-            if ready && left.selection.isEmpty && right.selection.isEmpty {
-                Text("Select files to copy them across").themedFont(.caption2).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center).frame(maxWidth: stacked ? 120 : 70).fixedSize(horizontal: false, vertical: true)
-            }
-            Divider().frame(width: stacked ? nil : 30, height: stacked ? 30 : nil).padding(stacked ? .horizontal : .vertical, 4)
-            syncButton(ready: ready)
+            directions
+            syncButton
+            Button { showRules.toggle() } label: { Label("Rules", systemImage: "slider.horizontal.3").themedFont(.caption) }
+                .controlSize(.small)
+                .popover(isPresented: $showRules, arrowEdge: stacked ? .top : .trailing) { SyncRulesForm(stacked: stacked) }
+                .help("What wins when a file differs on both sides")
             Spacer()
+            if ready && !(left.selection.isEmpty && right.selection.isEmpty) { selectionCopy }
         }
+        .padding(stacked ? .horizontal : .vertical, 10)
         .labelButtons(store.theme.label, accent: store.theme.accent)
         .buttonStyle(.bordered)
-        .frame(width: stacked ? nil : 88, height: stacked ? 64 : nil)
+        .frame(width: stacked ? nil : 104, height: stacked ? 72 : nil)
         .frame(maxWidth: stacked ? .infinity : nil, maxHeight: stacked ? nil : .infinity)
         .themeBackground(store.theme.strip, .background.secondary)
     }
 
-    private func copyButton(from: Pane, to: Pane, symbol: String, ready: Bool) -> some View {
-        let n = from.selection.count
-        return Button { copy(from, to) } label: {
-            VStack(spacing: 1) {
-                Image(systemName: symbol)
-                Text(n > 0 ? "Copy \(n)" : "Copy").themedFont(.caption2).monospacedDigit()
+    /// Three buttons, one lit: which way the sync goes.
+    private var directions: some View {
+        let stack = stacked ? AnyLayout(HStackLayout(spacing: 6)) : AnyLayout(VStackLayout(spacing: 6))
+        return stack {
+            ForEach(SyncMode.allCases) { m in
+                let on = mode == m, t = store.theme
+                Button { mode = m } label: {
+                    VStack(spacing: 2) {
+                        Image(systemName: m.symbol(stacked: stacked)).font(.system(size: 15, weight: .bold))
+                        Text(m.label(stacked: stacked)).themedFont(.caption2.weight(on ? .bold : .regular)).lineLimit(1)
+                    }
+                    .frame(width: 78, height: 40)
+                    .foregroundStyle(on ? t.onAccent : Color.primary)
+                    .background(RoundedRectangle(cornerRadius: t.corner(7)).fill(on ? AnyShapeStyle(t.accent) : AnyShapeStyle(Color.secondary.opacity(0.1))))
+                    .overlay(RoundedRectangle(cornerRadius: t.corner(7)).strokeBorder(on ? t.accent : Color.secondary.opacity(0.35)))
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(ready ? 1 : 0.5)
+                .help(explain(m))
+                .accessibilityLabel("Sync \(m.label(stacked: stacked))")
+                .accessibilityAddTraits(on ? .isSelected : [])
             }
-            .frame(width: 46)
         }
-        .disabled(!ready || n == 0)
-        .help(n > 0 ? "Copy the \(n) selected item(s) to \(to.title). You can undo it afterwards."
-                    : "Select files in \(from.title) to copy them to \(to.title)")
+    }
+
+    private func explain(_ m: SyncMode) -> String {
+        switch m {
+        case .upload: "Copy new and changed files from \(name(left)) to \(name(right)). \(name(left)) stays as it is."
+        case .download: "Copy new and changed files from \(name(right)) to \(name(left)). \(name(right)) stays as it is."
+        case .both: "Each side gets what it misses; when a file differs, the rules pick the winner (newest by default)."
+        }
+    }
+
+    /// What the chosen direction touches, in plain words.
+    private var changes: String {
+        switch mode {
+        case .upload: "Only \(name(right)) changes"
+        case .download: "Only \(name(left)) changes"
+        case .both: "Both sides can change"
+        }
     }
 
     /// Never syncs straight away: it opens the preview, where Sync is the last step.
-    private func syncButton(ready: Bool) -> some View {
+    private var syncButton: some View {
         let label = store.theme.label
-        let stack = stacked ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 3))
+        let stack = stacked ? AnyLayout(HStackLayout(spacing: 8)) : AnyLayout(VStackLayout(spacing: 4))
         return stack {
             Button { hover?.cancel(); showHelp = false; Task { await store.sync(mode, left, right, dryRun: true) } } label: {
-                Image(systemName: "arrow.triangle.2.circlepath")
+                Image(systemName: "eye")
                     .font(.title3.weight(.semibold)).foregroundStyle(ready ? store.theme.onAccent : .white)
-                    .frame(width: stacked ? 34 : 40, height: stacked ? 34 : 40)
+                    .frame(width: stacked ? 34 : 44, height: stacked ? 34 : 44)
                     .background(Circle().fill(ready ? AnyShapeStyle(LinearGradient(colors: [store.theme.accent, store.theme.accent2], startPoint: .topLeading, endPoint: .bottomTrailing)) : AnyShapeStyle(Color.secondary.opacity(0.4))))
                     .shadow(color: label && ready ? store.theme.accent.opacity(0.55) : .clear, radius: 10)
             }
@@ -531,9 +563,11 @@ struct CenterStrip: View {
                 if store.planning { ProgressView().controlSize(.mini) }
                 else if label { Text("PREVIEW SYNC").font(bebas(15)).tracking(0.5).foregroundStyle(ready ? store.theme.accent : .secondary) }
                 else { Text("Preview sync").themedFont(.caption.weight(.semibold)).foregroundStyle(ready ? .primary : .secondary) }
-                Text("Undo anytime").themedFont(.caption2).foregroundStyle(.secondary)
+                if ready {
+                    Text(changes).themedFont(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        .frame(maxWidth: stacked ? 150 : 96).fixedSize(horizontal: false, vertical: true)
+                }
             }
-            .fixedSize()
         }
         .help(ready ? "" : "Open a location on both sides to sync")
     }
@@ -541,14 +575,37 @@ struct CenterStrip: View {
     private var help: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("How sync works").themedFont(.headline)
-            Label("Click: you first see what would change. Nothing changes yet.", systemImage: "1.circle")
-            Label("Pick the direction there and check the list. Then click Sync.", systemImage: "2.circle")
-            Label("Changed your mind? Undo in the status bar, with ⌘Z or in Activity.", systemImage: "3.circle")
-            Text("Nothing is ever deleted. Files that get replaced are backed up first.").themedFont(.caption).foregroundStyle(.secondary)
+            Label("Pick the direction with the buttons above. The lit one is used.", systemImage: "1.circle")
+            Label("Click here: you see every file that would change. Nothing changes yet. Space shows what changes inside a file.", systemImage: "2.circle")
+            Label("Click Sync in the preview. Changed your mind? Undo in the status bar, with ⌘Z or in Activity.", systemImage: "3.circle")
+            Text("Nothing is ever deleted. Files that get replaced are backed up first. Rules sets which version wins.").themedFont(.caption).foregroundStyle(.secondary)
         }
         .themedFont(.callout)
         .fixedSize(horizontal: false, vertical: true)
-        .padding(14).frame(width: 290)
+        .padding(14).frame(width: 300)
+    }
+
+    /// Shown only while files are selected, so it's never mistaken for the sync direction.
+    private var selectionCopy: some View {
+        let stack = stacked ? AnyLayout(HStackLayout(spacing: 6)) : AnyLayout(VStackLayout(spacing: 6))
+        return stack {
+            Text("Selected").themedFont(.caption2).foregroundStyle(.secondary)
+            if !left.selection.isEmpty { copyButton(from: left, to: right, symbol: stacked ? "arrow.down" : "arrow.right", trailing: true) }
+            if !right.selection.isEmpty { copyButton(from: right, to: left, symbol: stacked ? "arrow.up" : "arrow.left", trailing: false) }
+        }
+    }
+
+    private func copyButton(from: Pane, to: Pane, symbol: String, trailing: Bool) -> some View {
+        let n = from.selection.count
+        return Button { copy(from, to) } label: {
+            HStack(spacing: 3) {
+                if !trailing { Image(systemName: symbol) }
+                Text("Copy \(n)").themedFont(.caption).monospacedDigit()
+                if trailing { Image(systemName: symbol) }
+            }
+            .frame(minWidth: 64)
+        }
+        .help("Copy the \(n) selected \(n == 1 ? "item" : "items") from \(name(from)) to \(name(to)). A copy that replaces files shows a preview first; you can undo it afterwards.")
     }
 
     private func copy(_ from: Pane, _ to: Pane) {

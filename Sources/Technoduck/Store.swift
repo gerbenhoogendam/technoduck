@@ -87,6 +87,7 @@ import UniformTypeIdentifiers
     var plan: SyncPlan?
     /// The two panes the open sync preview compares, for its auto-upload switch.
     var planPanes: (Pane, Pane)?
+    var rules = SyncRules.load() { didSet { rules.save() } }
     /// The last sync or copy, offered as Undo in the status bar while it can still be undone.
     var lastUndo: UUID?
     /// Top and bottom instead of side by side; only with two panes.
@@ -316,15 +317,33 @@ import UniformTypeIdentifiers
             async let r = walk(b.service, b.root, hidden: hidden, strict: true, limit: 100_000, exclude: ex)
             let (lw, rw) = try await (l, r)
             guard lw.complete, rw.complete else { throw ServiceError("More than 100,000 files — pick a smaller folder.") }
-            var p = SyncPlan(mode: mode, a: a, b: b, ops: makePlan(local: lw.files, remote: rw.files, mode: mode))
+            var (ops, skipped) = planSync(local: lw.files, remote: rw.files, mode: mode, rules: rules)
+            if !auto { (ops, skipped) = await dropSameContent(ops, skipped, a, b) }
+            var p = SyncPlan(mode: mode, a: a, b: b, ops: ops, skipped: skipped)
             message = ""
             if dryRun {
                 if let open = plan, open.title == nil { p.id = open.id }  // a new direction in an open preview updates it in place
                 plan = p
             }
             else if p.ops.isEmpty { if !auto { message = "Already in sync — nothing to copy." } }
-            else { await run(p, title: (auto ? "Auto-sync " : "Sync ") + mode.title.components(separatedBy: "  ·  ")[0], kind: .sync, quiet: auto) }
+            else { await run(p, title: (auto ? "Auto-sync " : "Sync ") + mode.phrase(a, b), kind: .sync, quiet: auto) }
         } catch { message = "Compare failed: \(error.localizedDescription)" }
+    }
+
+    /// Files whose size matches and only the date is newer are checked byte for byte; identical ones are left out.
+    /// Servers often set their own date on upload, so this keeps a sync from "replacing" files with themselves.
+    // shortcut: only up to 50 files of 5 MB each are checked; past that the date decides, as before.
+    private func dropSameContent(_ ops: [SyncOp], _ skipped: [SkippedFile], _ a: Endpoint, _ b: Endpoint) async -> ([SyncOp], [SkippedFile]) {
+        let check = ops.filter { $0.overwrite && $0.reason == "Newer" && $0.size <= 5_000_000 }
+        guard !check.isEmpty, check.count <= 50 else { return (ops, skipped) }
+        var same = Set<UUID>()
+        for (n, op) in check.enumerated() {
+            message = "Checking contents of files with a newer date (\(n + 1) of \(check.count))…"
+            if let v = try? await fetchVersions(op, a, b), v.old == v.new { same.insert(op.id) }
+        }
+        message = ""
+        return (ops.filter { !same.contains($0.id) },
+                skipped + ops.filter { same.contains($0.id) }.map { SkippedFile(rel: $0.rel, why: "Same contents, only the date differs") })
     }
 
     /// `undoable` false skips the backups of replaced files (for backup snapshots).

@@ -28,21 +28,55 @@ func isExcluded(_ name: String, _ rel: String, _ patterns: [String]) -> Bool {
     patterns.contains { fnmatch($0, name, 0) == 0 || fnmatch($0, rel, 0) == 0 }
 }
 
+/// What a sync does with a file that exists on both sides but differs. Set in the Rules panel, used for every sync.
+struct SyncRules: Codable, Equatable {
+    enum Compare: String, Codable, CaseIterable { case dateAndSize, sizeOnly }
+    enum Replace: String, Codable, CaseIterable { case whenDifferent, onlyNewer, never }
+    enum Conflict: String, Codable, CaseIterable { case newest, a, b, skip }
+    var compare = Compare.dateAndSize
+    var replace = Replace.whenDifferent
+    var conflict = Conflict.newest
+
+    static func load() -> SyncRules {
+        UserDefaults.standard.data(forKey: "syncRules").flatMap { try? JSONDecoder().decode(SyncRules.self, from: $0) } ?? SyncRules()
+    }
+    func save() { UserDefaults.standard.set(try? JSONEncoder().encode(self), forKey: "syncRules") }
+}
+
+/// A file that differs on both sides but that the rules leave alone; the preview lists these.
+struct SkippedFile: Identifiable, Hashable {
+    var rel: String
+    var why: String
+    var id: String { rel }
+}
+
 /// Decides what to copy; never deletes anything.
-/// One way: copy when missing, when the size differs, or when the source is more than a minute newer.
-/// Both ways: a side that misses something gets a copy; when sizes differ the newer file wins.
+/// One way: copy what's missing; a file that differs (size, or the source more than a minute newer) follows `rules.replace`.
+/// Both ways: a side that misses something gets a copy; when sizes differ `rules.conflict` picks the winner.
 /// `force` copies every file (used for copying a selection).
 // shortcut: both-ways ignores same-size edits so files don't ping-pong; add checksums if that matters.
-func makePlan(local: [String: RemoteFile], remote: [String: RemoteFile], mode: SyncMode, force: Bool = false) -> [SyncOp] {
-    var ops: [SyncOp] = []
+func makePlan(local: [String: RemoteFile], remote: [String: RemoteFile], mode: SyncMode, force: Bool = false, rules: SyncRules = SyncRules()) -> [SyncOp] {
+    planSync(local: local, remote: remote, mode: mode, force: force, rules: rules).ops
+}
+
+func planSync(local: [String: RemoteFile], remote: [String: RemoteFile], mode: SyncMode, force: Bool = false, rules: SyncRules = SyncRules()) -> (ops: [SyncOp], skipped: [SkippedFile]) {
+    var ops: [SyncOp] = [], skipped: [SkippedFile] = []
+    func date(_ f: RemoteFile) -> Date { f.modified ?? .distantPast }
     func copy(_ rel: String, _ s: RemoteFile, to side: Side, over d: RemoteFile?) {
-        if let d, d.isDir != s.isDir { return }  // a file on one side and a folder on the other: leave both alone
+        if let d, d.isDir != s.isDir { skipped.append(SkippedFile(rel: rel, why: "A file on one side, a folder on the other")); return }
         if s.isDir { if d == nil { ops.append(SyncOp(to: side, rel: rel, isDir: true, reason: "New folder")) }; return }
         guard let d else { ops.append(SyncOp(to: side, rel: rel, size: s.size, modified: s.modified, reason: "New")); return }
-        let newer = (s.modified ?? .distantPast) > (d.modified ?? .distantPast).addingTimeInterval(60)
-        guard force || s.size != d.size || newer else { return }
-        ops.append(SyncOp(to: side, rel: rel, size: s.size, modified: s.modified, overwrite: true,
-                          reason: force ? "Replace" : s.size != d.size ? "Size differs" : "Newer"))
+        if force { ops.append(SyncOp(to: side, rel: rel, size: s.size, modified: s.modified, overwrite: true, reason: "Replace")); return }
+        let newer = date(s) > date(d).addingTimeInterval(60), older = date(d) > date(s).addingTimeInterval(60)
+        let differs = s.size != d.size || (rules.compare == .dateAndSize && newer)
+        guard differs else { return }
+        switch rules.replace {
+        case .never: skipped.append(SkippedFile(rel: rel, why: "Differs, but the rules only add new files"))
+        case .onlyNewer where !newer: skipped.append(SkippedFile(rel: rel, why: older ? "The copy there is newer" : "Not newer here"))
+        default:
+            ops.append(SyncOp(to: side, rel: rel, size: s.size, modified: s.modified, overwrite: true,
+                              reason: s.size != d.size ? "Size differs" : "Newer", warning: older ? "The file it replaces is newer" : nil))
+        }
     }
     // Sorted, so a folder always comes before what's inside it.
     for rel in Set(local.keys).union(remote.keys).sorted() {
@@ -56,13 +90,22 @@ func makePlan(local: [String: RemoteFile], remote: [String: RemoteFile], mode: S
                 if let r { copy(rel, r, to: .a, over: nil) }
                 continue
             }
-            guard !l.isDir, !r.isDir, l.size != r.size else { continue }
-            let lm = l.modified ?? .distantPast, rm = r.modified ?? .distantPast
-            if lm > rm { ops.append(SyncOp(to: .b, rel: rel, size: l.size, modified: l.modified, overwrite: true, reason: "Newer here")) }
-            if rm > lm { ops.append(SyncOp(to: .a, rel: rel, size: r.size, modified: r.modified, overwrite: true, reason: "Newer there")) }
+            if l.isDir != r.isDir { skipped.append(SkippedFile(rel: rel, why: "A file on one side, a folder on the other")); continue }
+            guard !l.isDir, l.size != r.size else { continue }
+            let lm = date(l), rm = date(r)
+            let toB = SyncOp(to: .b, rel: rel, size: l.size, modified: l.modified, overwrite: true, reason: "Newer here")
+            let toA = SyncOp(to: .a, rel: rel, size: r.size, modified: r.modified, overwrite: true, reason: "Newer there")
+            switch rules.conflict {
+            case .newest:
+                if lm > rm { ops.append(toB) } else if rm > lm { ops.append(toA) }
+                else { skipped.append(SkippedFile(rel: rel, why: "Same date, different size: no newest")) }
+            case .a: ops.append(SyncOp(to: .b, rel: rel, size: l.size, modified: l.modified, overwrite: true, reason: "This side wins", warning: rm > lm ? "The file it replaces is newer" : nil))
+            case .b: ops.append(SyncOp(to: .a, rel: rel, size: r.size, modified: r.modified, overwrite: true, reason: "Other side wins", warning: lm > rm ? "The file it replaces is newer" : nil))
+            case .skip: skipped.append(SkippedFile(rel: rel, why: "Changed on both sides: left alone"))
+            }
         }
     }
-    return ops
+    return (ops, skipped)
 }
 
 /// Applies and undoes single steps between any two locations. Every file that gets replaced is saved under `backups` first.

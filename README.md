@@ -15,8 +15,10 @@ A native macOS file-transfer client written in Swift and SwiftUI, with a local f
 ## Features
 
 - **Up to four browsers:** each pane shows your Mac or any server. Drag the dividers to resize, drag a pane's ≡ grip to move it, and drag files between panes or in from Finder. With two panes, View › Two Panes Top and Bottom (⌥⌘D) stacks them.
-- **Sync between any two neighbouring panes:** A → B, B → A, or both ways (newest wins). The sync button always shows a preview first, with every file that would be copied and the totals; nothing moves until you click Sync there.
-- **Copy across:** select files and click Copy in the strip between the panes. A copy that would replace files shows the same preview first.
+- **Sync between any two neighbouring panes:** pick To right, To left or Both ways in the strip between the panes, then Preview Sync. The preview shows which folder changes and which stays as it is, and every file that would be copied; nothing moves until you click Sync there.
+- **See what changes inside a file:** in the preview, Space or double-click opens a comparison of the file that arrives against the one it replaces. Text (HTML, CSS, JS, PHP, JSON, SVG, XML, Markdown, CSV and so on, minified or not) shows the changed lines and words; images (JPEG, PNG, GIF, WebP, AVIF, HEIC, ICO, BMP, TIFF) and PDF pages get a pixel diff in magenta; a PDF's text is compared page by page; fonts show their names and a sample line; video and audio show length, size, a frame or a waveform; ZIP and TAR archives list what's inside. Anything else is compared byte by byte.
+- **Sync rules:** what counts as changed (size, or size and date) and which version wins: replace, only when newer, or only add new files; for both ways the newest, the left, the right or neither. A file that only has a newer date is checked byte for byte first, so identical files are left alone.
+- **Copy across:** select files and click Copy in the strip between the panes, or drag them. A copy that would replace files shows the same preview first.
 - **Undo:** files that get replaced are backed up first, so any sync or copy can be rolled back: Undo in the status bar, Edit › Undo (⌘Z), or the Transfers and Timeline panel. A sync never deletes anything.
 - **Timeline per connection:** uploads, downloads, syncs, deletes and undos, grouped by day.
 - **Folder sizes:** every folder's total size is worked out in the background.
